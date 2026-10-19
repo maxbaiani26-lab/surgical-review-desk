@@ -4,6 +4,12 @@ App URL: https://maxbaiani26-lab.github.io/surgical-review-desk/
 
 ## Changes in this version
 
+- Choose specialty first, then a procedure. Eleven specialties and 30 curated procedure entries have per-procedure links to U.S. National Library of Medicine MedlinePlus or ACS. The list is not exhaustive, is not a CPT/HCPCS coding catalog, and does not establish coverage. Specialty assignments are editorial and can overlap.
+- The example button fills every case field, including a clearly fictional training policy and a manual-reference explanation, without transmitting anything or inventing studies.
+- A status message near the main action now exposes PubMed search, article retrieval, GPU checks, and AI progress. Startup errors identify missing application files. Versioned script URLs reduce stale-cache mismatches.
+- Bounded search, GPU and worker waits report stalls explicitly and retain retrieved references for export. These changes address silent waiting; they do not remove hardware or external-host requirements. The reported production failure could not be reproduced because this workspace blocks the live site and external services.
+
+
 - Removed the documentation completeness checklist, checkboxes, scores, and readiness labels.
 - One action now searches PubMed, includes all returned records automatically, and attempts a local AI coverage assessment using retrieved abstracts, case facts, and the supplied policy.
 - No manual article selection is required. The app includes up to ten records from the submitted query.
@@ -14,9 +20,10 @@ App URL: https://maxbaiani26-lab.github.io/surgical-review-desk/
 ## Deploy the update
 
 1. Unzip the package and open its `surgical-review-desk` directory.
-2. Upload that directory's contents to the root of the existing `maxbaiani26-lab/surgical-review-desk` repository. Replace the old files. The following five files are required:
+2. Upload that directory's contents to the root of the existing `maxbaiani26-lab/surgical-review-desk` repository. Replace the old files. The following six files are required:
    - `index.html`
    - `app.js`
+   - `procedures.js`
    - `pubmed.js`
    - `assessment.js`
    - `assessment-worker.mjs`
@@ -46,7 +53,7 @@ The application remains a static GitHub Pages site with no backend, API key, pai
 - There is no remote inference API. Case content is passed to the local worker, not to NCBI or a model inference service. Only the query and filters go to NCBI; model hosts receive asset requests.
 - The worker clears chat context after generation. Stop terminates it. Case content otherwise exists in page/worker memory until cleared or unloaded.
 - If the model, GPU, CDN, or source access fails, the app shows a technical failure/indeterminate state and does not fake an AI result.
-- Model download has a 15-minute deadline, and generation a 3-minute deadline. The Stop button ends either.
+- Model initialization has a 3-minute deadline and generation a 3-minute deadline. An unresponsive worker fails after 30 seconds; subsequent lack of progress fails after 90 seconds. The GPU adapter check has a 10-second limit. The Stop button ends either.
 
 Review the model's licensing and restrictions for any use beyond this prototype:
 https://huggingface.co/mlc-ai/Llama-3.2-3B-Instruct-q4f32_1-MLC
@@ -65,7 +72,7 @@ https://huggingface.co/mlc-ai/Llama-3.2-3B-Instruct-q4f32_1-MLC
 
 ## Verification
 
-See `VERIFICATION.md`. Nineteen automated service, validation, and workflow-state tests pass. They use synthetic test data and mocked AI/network responses; they do not establish actual model quality.
+See `VERIFICATION.md`. Twenty-four automated service, validation, and workflow-state tests pass. They use synthetic test data and mocked AI/network responses; they do not establish actual model quality.
 
 Live PubMed CORS, actual model download/inference, visual/mobile rendering, and end-to-end performance remain unverified in this workspace. NCBI and browser installation downloads were rejected by this workspace's network policy during the prior integration. No claim is made that the new model can load here or on every device.
 
@@ -78,6 +85,14 @@ node --check assessment.js
 node --check assessment-worker.mjs
 node --test tests/*.test.cjs
 ```
+
+## Procedure catalog sources
+
+Reviewed October 19, 2026. Each entry in `procedures.js` contains its exact public source URL, also shown under the procedure menu. Source wording is normalized into concise menu labels. Specialty grouping is an editorial organization, not an official exhaustive taxonomy or an exclusive scope-of-practice claim.
+
+- U.S. National Library of Medicine, MedlinePlus Medical Encyclopedia: https://medlineplus.gov/ency/encyclopedia_S.htm
+- American College of Surgeons, specialty descriptions: https://www.facs.org/for-medical-professionals/education/programs/so-you-want-to-be-a-surgeon/section-ii-surgical-specialties/
+- ACS cholecystectomy patient information: https://www.facs.org/for-patients/the-day-of-your-surgery/cholecystectomy/
 
 ## Technical sources and attribution
 

@@ -6,8 +6,22 @@ const fieldLabels={procedure:'Procedure',specialty:'Specialty',urgency:'Requeste
 const articles=new Map();
 let assessment=null, assessmentInput=null, runFields=null, currentSearch=null, busy=false, queryTouched=false, revision=0, worker=null, workerReject=null;
 const readFields=()=>Object.fromEntries(textFields.map(id=>[id,$(id).value.trim()]));
-function notice(message,error=false){$('searchStatus').textContent=message;$('searchStatus').className='search-status'+(error?' error':'');}
+function notice(message,error=false){$('workflowStatus').textContent=message;$('workflowStatus').style.borderLeftColor=error?'#a1413b':'#087e78';$('searchStatus').textContent=message;$('searchStatus').className='search-status'+(error?' error':'');}
 function toast(message){$('toast').textContent=message;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2000);}
+function updateProcedures(selected=''){
+  const list=ProcedureCatalog[$('specialty').value]||[];
+  $('procedure').innerHTML='<option value="">'+(list.length?'Select procedure':'Choose a specialty first')+'</option>'+list.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  $('procedure').disabled=!list.length;
+  $('procedure').value=list.some(p=>p.name===selected)?selected:'';
+  updateProcedureSource();
+}
+function updateProcedureSource(){
+  const item=(ProcedureCatalog[$('specialty').value]||[]).find(p=>p.name===$('procedure').value);
+  $('procedureSource').innerHTML=item?`Source: <a href="${esc(item.source)}" target="_blank" rel="noopener noreferrer">${item.source.includes('facs.org')?'American College of Surgeons':'MedlinePlus (U.S. National Library of Medicine)'}</a>. Curated examples; not a coverage list.`:'Choose a specialty, then a procedure. Curated U.S.-source examples; not exhaustive. Overlapping specialties may perform the same procedure.';
+}
+function deadlineTask(task,ms,message){
+  let timer;return Promise.race([task,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),ms)})]).finally(()=>clearTimeout(timer));
+}
 function draftQuery(force=false){
   if(queryTouched&&!force)return;
   $('pubmedQuery').value=[$('procedure').value.trim(),$('diagnosis').value.trim()].filter(Boolean).map(s=>'('+s+')').join(' AND ');
@@ -40,6 +54,7 @@ function setBusy(value){
   busy=value;
   for(const formID of ['reviewForm','searchForm']) $(formID).querySelectorAll('input,textarea,select,button').forEach(el=>el.disabled=value);
   $('cancelBtn').classList.toggle('hidden',!value);
+  if(!value)$('procedure').disabled=!$('specialty').value;
   $('assessBtn').textContent=value?'Working…':'Search evidence & assess coverage →';
   $('searchResults').setAttribute('aria-busy',String(value));
 }
@@ -50,25 +65,28 @@ function invalidate(){
 }
 async function localInference(payload,token){
   if(!window.isSecureContext||!navigator.gpu)throw new Error('Local AI needs a secure HTTPS page and a WebGPU-compatible browser/device. PubMed evidence is available below, but no AI assessment was generated.');
-  const adapter=await navigator.gpu.requestAdapter();
+  notice('PubMed evidence retrieved. Checking local AI hardware…');
+  const adapter=await deadlineTask(navigator.gpu.requestAdapter(),10000,'The WebGPU hardware check did not respond within 10 seconds. Evidence remains available; try a WebGPU-compatible browser.');
   if(!adapter)throw new Error('No suitable WebGPU adapter is available. No AI assessment was generated.');
   if(token!==revision)throw new Error('Assessment stopped.');
-  if(!worker)worker=new Worker('./assessment-worker.mjs',{type:'module'});
+  if(!worker)worker=new Worker('./assessment-worker.mjs?v=20261019b',{type:'module'});
   return new Promise((resolve,reject)=>{
     let timer;
-    const cleanup=()=>{clearTimeout(timer);workerReject=null;if(worker){worker.onmessage=null;worker.onerror=null;}};
+    const cleanup=()=>{clearTimeout(timer);clearTimeout(activityTimer);workerReject=null;if(worker){worker.onmessage=null;worker.onerror=null;}};
     const fail=message=>{cleanup();worker?.terminate();worker=null;reject(new Error(message));};
     const deadline=ms=>{clearTimeout(timer);timer=setTimeout(()=>fail('Local AI timed out. No coverage conclusion was generated.'),ms);};
-    workerReject=()=>fail('Assessment stopped.');deadline(15*60*1000);
+    workerReject=()=>fail('Assessment stopped.');deadline(3*60*1000);
+    let activityTimer=setTimeout(()=>fail('The AI runtime did not respond within 30 seconds. Model/CDN access may be blocked. Retrieved evidence remains available.'),30000);
     worker.onerror=()=>fail('The local AI worker or model download could not load. Check network access, WebGPU support, available GPU memory, and model-host access. No coverage conclusion was generated.');
     worker.onmessage=event=>{
-      const msg=event.data;
+      const msg=event.data;clearTimeout(activityTimer);
+      activityTimer=setTimeout(()=>fail('No AI progress for 90 seconds. The model download or inference stalled. Retrieved evidence remains available.'),90000);
       if(token!==revision){fail('Assessment stopped.');return;}
       if(msg.type==='progress'||msg.type==='generating'){notice(msg.message);if(msg.type==='generating')deadline(3*60*1000);}
       if(msg.type==='error')fail('Local AI failed: '+msg.message);
       if(msg.type==='result'){cleanup();resolve(msg.text);}
     };
-    worker.postMessage({type:'assess',model:Coverage.MODEL,messages:Coverage.prompt(payload),schema:Coverage.schema});
+    try{worker.postMessage({type:'assess',model:Coverage.MODEL,messages:Coverage.prompt(payload),schema:Coverage.schema});}catch(error){fail(error.message);}
   });
 }
 const client=PubMed.createClient({onRetry:(code,wait)=>{if(busy)notice(`NCBI returned HTTP ${code}. Retrying in ${Math.ceil(wait/1000)} seconds…`);}});
@@ -83,9 +101,10 @@ async function assess(event){
   currentSearch={criteria,count:null,translation:'',retrievedAt:'',messages:[],status:'Searching',error:''};
   renderAssessment();renderRecords();setBusy(true);notice('Searching PubMed. Retrieved evidence will be included and analyzed automatically…');
   try{
-    const result=await client.search(criteria,0,10);if(token!==revision)return;
+    const result=await deadlineTask(client.search(criteria,0,10),45000,'PubMed search stalled. No search result was substituted. Try again after checking NCBI access.');if(token!==revision)return;
     Object.assign(currentSearch,{count:result.count,translation:result.translation,messages:result.messages});
-    const records=await client.fetchRecords(result.ids);if(token!==revision)return;
+    notice(`PubMed found ${result.count} matches. Retrieving ${result.ids.length} article records and abstracts…`);
+    const records=await deadlineTask(client.fetchRecords(result.ids),45000,'PubMed article retrieval stalled. Try again after checking NCBI access.');if(token!==revision)return;
     currentSearch.retrievedAt=new Date().toISOString();currentSearch.status='Retrieved';
     records.forEach(ref=>articles.set(ref.pmid,{...ref,retrievedAt:currentSearch.retrievedAt}));
     const missing=result.ids.filter(id=>!articles.has(id));if(missing.length)currentSearch.messages.push('Missing records for PMIDs '+missing.join(', '));
@@ -118,7 +137,12 @@ function downloadBrief(){const url=URL.createObjectURL(new Blob([buildBrief()],{
 $('reviewForm').addEventListener('submit',assess);
 $('searchForm').addEventListener('submit',assess);
 $('reviewForm').addEventListener('input',()=>{draftQuery();invalidate();});
-$('reviewForm').addEventListener('change',invalidate);
+$('reviewForm').addEventListener('change',event=>{
+  if(event.target.id==='specialty')updateProcedures();
+  if(event.target.id==='procedure')updateProcedureSource();
+  if(['specialty','procedure'].includes(event.target.id)){queryTouched=false;draftQuery(true);}
+  invalidate();
+});
 $('searchForm').addEventListener('input',event=>{if(event.target.id==='pubmedQuery')queryTouched=true;invalidate();});
 $('searchForm').addEventListener('change',invalidate);
 $('buildQuery').addEventListener('click',()=>{queryTouched=false;draftQuery(true);invalidate();$('pubmedQuery').focus();});
@@ -128,11 +152,19 @@ $('cancelBtn').addEventListener('click',()=>{
 });
 $('clearBtn').addEventListener('click',()=>{
   if(!confirm('Clear the case, PubMed records, and coverage draft?'))return;
-  revision++;worker?.terminate();worker=null;$('reviewForm').reset();$('searchForm').reset();queryTouched=false;invalidate();notice('No assessment started.');
+  revision++;worker?.terminate();worker=null;$('reviewForm').reset();$('searchForm').reset();updateProcedures();queryTouched=false;invalidate();notice('No assessment started.');
 });
 $('sampleBtn').addEventListener('click',()=>{
   if($('procedure').value.trim()&&!confirm('Replace the case with a fictional example?'))return;
-  const example={procedure:'Laparoscopic cholecystectomy',specialty:'General surgery',urgency:'Routine',diagnosis:'Symptomatic cholelithiasis',setting:'Outpatient / ambulatory',symptoms:'FICTIONAL CASE: recurrent right upper quadrant pain after meals for five months, interfering with daily activities.',findings:'FICTIONAL CASE: ultrasound reports gallstones without common bile duct dilation.',treatment:'FICTIONAL CASE: symptoms persist despite dietary modification. Alternatives and procedure rationale require specialist review.',factors:'FICTIONAL CASE: no additional patient risk information supplied. Confirm patient goals and anesthesia assessment.',criteria:'',reviewNotes:'Fictional example; no real insurance policy is supplied. Coverage should remain indeterminate.'};
-  textFields.forEach(id=>$(id).value=example[id]||'');$('searchForm').reset();queryTouched=false;draftQuery(true);invalidate();notice('Fictional case loaded. Review the search terms, then start the assessment.');
+  const example={procedure:'Laparoscopic cholecystectomy',specialty:'General surgery',urgency:'Routine',diagnosis:'Symptomatic cholelithiasis',setting:'Outpatient / ambulatory',symptoms:'FICTIONAL CASE: Adult with recurrent right upper quadrant pain after meals for five months, interfering with daily activities; no fever or jaundice.',findings:'FICTIONAL CASE: Ultrasound reports gallstones without common bile duct dilation. Liver tests within the laboratory reference range.',treatment:'FICTIONAL CASE: Symptoms persist despite dietary modification and clinician-supervised symptom management. Alternatives discussed.',factors:'FICTIONAL CASE: Adult, no known major cardiopulmonary comorbidity, no previous abdominal surgery, no anticoagulant therapy. Anesthesia evaluation pending; patient preferences require confirmation.',criteria:'FICTIONAL TRAINING POLICY — DEMO-001, version 2026-10-19; not a real insurer policy. For this demonstration, laparoscopic cholecystectomy is eligible when recurrent symptoms compatible with biliary colic and imaging-confirmed gallstones are documented. A qualified reviewer must confirm patient-specific risk, alternatives, applicable benefit exclusions, and the actual plan before any coverage decision.',literature:'No manual citation supplied in this fictional example. Live PubMed records will be retrieved only after the user submits the displayed query; no publications are fabricated.',reviewNotes:'FICTIONAL TRAINING CASE AND POLICY. Assess applicability of retrieved abstracts, alternatives, perioperative risks, and any missing facts. No real patient or insurance eligibility is represented.'};
+  $('specialty').value=example.specialty;updateProcedures(example.procedure);
+  textFields.forEach(id=>$(id).value=example[id]);$('searchForm').reset();
+  $('fromYear').value='2016';$('toYear').value='2026';$('pubType').value='';$('sortBy').value='relevance';
+  queryTouched=false;draftQuery(true);invalidate();notice('All case fields filled with a fictional example, including a fictional policy. Review the search query, then start.');
 });
+$('specialty').innerHTML='<option value="">Select specialty first</option>'+Object.keys(ProcedureCatalog).map(name=>`<option>${esc(name)}</option>`).join('');
+updateProcedures();
+
 $('caseId').textContent='Unsaved local case';
+
+window.surgiReviewStarted=true;

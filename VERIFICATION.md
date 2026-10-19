@@ -1,3 +1,12 @@
+# Verification of current update — October 19, 2026
+
+- JavaScript syntax: passed for app.js, procedures.js, pubmed.js, assessment.js and assessment-worker.mjs.
+- 24 Node service, assessment-validation and workflow tests passed with synthetic fixtures. Added dependent-menu reset/source checks, complete sample fill with no network requests, error recovery/select state, asynchronous deadline behavior, and catalog source checks.
+- All 30 procedure entries across 11 specialties have a source URL to MedlinePlus (U.S. National Library of Medicine) or ACS. The menu is curated, not exhaustive; mapping is editorial and does not imply coverage.
+- Live site access returned a workspace network 403. The model runtime CDN also returned 403. Therefore the production loading failure has not been reproduced or confirmed fixed. The code now reports startup failure and stalled search/model phases instead of waiting silently.
+- Browser tests, live PubMed CORS, model download/inference, and mobile rendering remain unverified if no browser report is included below. Unit tests do not establish clinical correctness.
+- No remote repository was changed or deployment performed. The prototype remains clinically unvalidated.
+
 # Verification — evidence-assisted assessment update
 
 ## Completed
