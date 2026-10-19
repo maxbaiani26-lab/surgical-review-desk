@@ -1,39 +1,37 @@
-# Verification record
+# Verification — evidence-assisted assessment update
 
 ## Completed
 
-- JavaScript syntax: `node --check app.js` and `node --check pubmed.js` passed.
-- Ten automated Node tests passed, covering:
-  - Empty query, invalid dates, publication-type validation, and query preservation.
-  - Official endpoint URL generation and parameter encoding.
-  - Search-result processing, offset pagination, and query-only request payloads.
-  - No results and avoidance of empty article fetches.
-  - Request spacing, bounded retry/backoff, and persistent rate-limit errors.
-  - Rejected requests, server errors, blocked connections, and invalid JSON/IDs.
-  - Local query drafting, repeated brief generation, and fresh export text.
-  - Reference inclusion/removal, PMID deduplication, notes, missing-abstract display branch, and exported reference provenance.
-- Service tests use mocked HTTP responses. App-state tests use a minimal DOM stub; they do not verify actual browser events, XML DOM parsing, or layout.
-- Relative production script paths are `./pubmed.js` and `./app.js`, with no build-time root assumption.
+- Syntax checks passed for `app.js`, `pubmed.js`, `assessment.js`, and `assessment-worker.mjs`.
+- Nineteen automated Node tests passed:
+  - Seven service tests for query/date/type validation, encoded official URLs, pagination parameters, query-only network payloads, no results, throttling, retry behavior, server/rate-limit/network failures, and invalid responses.
+  - Seven assessment tests for full-abstract preparation, unavailable/retracted/context-limited source handling, quote/PMID validation, nonexistent policy/case/abstract quotes, explicit policy grounding, indeterminate outcomes for unresolved evidence, malformed model output, and source instruction isolation in the prompt.
+  - Five workflow-state tests for no background queries, checklist removal, automatic record inclusion, a mocked model's draft report, editing invalidation, unavailable WebGPU, empty-result/network-failure behavior, and minimal query input validation.
+- Workflow tests use a minimal DOM stub and mocked AI output; service tests use mocked HTTP. No AI-generated recommendation was clinically evaluated.
+- Local HTTP checks verify the `/surgical-review-desk/` path and the five required files. HTML IDs and relative script paths are checked.
 
-## Attempted but blocked
+## Not verified
 
-A real ESearch query for `cholecystectomy` with an HTTP-origin header was attempted. The workspace network returned HTTP 403 and `Forbidden. Calls to this URL are not allowed.` No genuine record payload was obtained.
+- Genuine PubMed responses, actual browser XML parsing, browser-origin CORS from GitHub Pages, and matching displayed real article metadata to PubMed.
+- Actual WebLLM CDN/model loading, model license-host access, WebGPU performance, context-window compatibility, GPU memory use, JSON-schema generation compatibility, or inference quality.
+- Rendering, keyboard behavior, copy/download, and mobile layout in a real browser.
+- Any clinical or coverage accuracy. This is an unvalidated prototype, not an authorization engine.
 
-Playwright was available, but its browser executable was not installed. Browser download was also rejected with HTTP 403. Therefore an actual HTTP(S)-origin browser fetch and visual inspection could not run.
+The workspace rejected NCBI access with HTTP 403 and the message `Forbidden. Calls to this URL are not allowed.` A browser executable was not installed, and browser download was also blocked. These facts do not establish a failure of NCBI CORS or guarantee that model files can be loaded on the user's device. Runtime failures must be shown rather than replaced by fabricated evidence or assessments.
 
-No working CORS capability or end-to-end live retrieval is claimed. The cause of the blocked requests cannot be attributed to NCBI CORS policy based on these observations.
+## Deployment acceptance steps
 
-## Remaining deployment acceptance checks
+At https://maxbaiani26-lab.github.io/surgical-review-desk/ :
 
-1. Visit the deployed `/surgical-review-desk/` page over HTTPS. Confirm both scripts load.
-2. Open developer tools → Network. Editing intake fields or drafting a query must not create API requests.
-3. Submit `cholecystectomy AND cholelithiasis`. Confirm a successful ESearch response followed by EFetch and that the browser can read both responses from the deployed origin. There must be no CORS error.
-4. Match displayed title, authors, year, journal, PMID, DOI, abstract, and publication types against the returned XML and PubMed record. Open available DOI/PMC links.
-5. Apply date/type filters and load another page. Check that query metadata, result counts, displayed-record counts, and retrieval timestamps reflect actual responses.
-6. Select two records, write relevance and limitation notes, remove/reselect one, and export. Confirm the exact selected PMIDs appear once each; manual references remain separately labeled.
-7. Test an empty query and a query returning no results. Confirm no false success state.
-8. Open a record with no abstract and a record with notice metadata. Confirm missing content and notices are displayed accurately without implying a full-text review or comprehensive integrity check.
-9. Simulate offline, a timeout, and API errors using developer tools. Confirm visible failure and no substitute results.
-10. Check keyboard access and widths of 390, 768, and 1280 px for horizontal overflow, clipped controls, and readable abstracts. Confirm repeated brief generation and copy/download work.
+1. Confirm all five required files load from the repository root and the completeness checklist is gone.
+2. Enter a de-identified case and an authentic policy excerpt; inspect the generated query. Editing must not send API requests.
+3. Start the assessment. Confirm an ESearch and EFetch request can be read from this HTTPS origin and that all retrieved records are automatically included.
+4. Compare source metadata/abstracts with actual PubMed records. Confirm model-host requests contain only asset URLs and no clinical content or prompts.
+5. On compatible WebGPU hardware, observe the first-use model download and local inference. Check that the recommendation actually follows the case and policy and addresses both supportive and opposing evidence.
+6. Verify each displayed PMID, quote, policy interpretation, and clinical claim manually. Matching quotes are not proof of sound reasoning.
+7. Export and confirm the report includes the exact evaluated clinical snapshot, policy, query, references, abstracts, model ID, timestamps, and limitations.
+8. Edit the case: the prior assessment and records must clear. Run again; no previous-case context should contaminate the result.
+9. Test missing policy, no results, missing abstracts, source/API failure, unavailable GPU, model-host failure, invalid model output, and Stop. None should yield a fabricated directional result.
+10. Inspect at mobile and desktop widths, check keyboard navigation, and test real copy/download operations.
 
-These checks remain unperformed. The prototype has not been clinically validated or deployed by the author of this update.
+These deployment acceptance steps remain unperformed. This delivery has not changed the live GitHub repository or deployed site.

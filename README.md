@@ -1,71 +1,93 @@
-# SurgiReview / surgical-review-desk
+# Surgical Review Desk — evidence-assisted coverage draft
 
-Static surgical-request documentation assistant with an implemented PubMed E-utilities client. No build step, server, account, API key, or paid service. It retrieves metadata and abstracts, never makes an authorization decision, and is not an AI assessment system.
+App URL: https://maxbaiani26-lab.github.io/surgical-review-desk/
 
-## Upload to your existing GitHub repository
+## Changes in this version
 
-1. Unzip the download. Open its `surgical-review-desk` folder.
-2. In your existing `surgical-review-desk` repository, choose **Add file → Upload files**.
-3. Upload the contents of that folder into the repository root. Replace `index.html` and upload both `app.js` and `pubmed.js`; all three are required. Upload README and tests as well if desired. Do not upload the enclosing folder as an extra nested directory.
-4. Commit to `main`.
-5. Under **Settings → Pages**, choose **Deploy from a branch → main → / (root)**, then save. If already configured, the commit triggers a new deployment.
-6. GitHub shows the actual address in **Settings → Pages**:
+- Removed the documentation completeness checklist, checkboxes, scores, and readiness labels.
+- One action now searches PubMed, includes all returned records automatically, and attempts a local AI coverage assessment using retrieved abstracts, case facts, and the supplied policy.
+- No manual article selection is required. The app includes up to ten records from the submitted query.
+- The draft may suggest **support coverage**, **policy does not support coverage**, or **indeterminate**. It includes policy comparisons, PMIDs, exact source quotes, uncertainties, and a next step.
+- Input edits clear the prior assessment and retrieved records so an old recommendation is not presented against a new case.
+- No insurer decision is made, no authorization request is submitted, and no clinical treatment is prescribed.
 
-   `https://YOUR-GITHUB-USERNAME.github.io/surgical-review-desk/`
+## Deploy the update
 
-No deployment has been performed by this delivery. Relative asset paths support the `/surgical-review-desk/` deployment path. If the old page persists after deployment, perform a hard refresh.
+1. Unzip the package and open its `surgical-review-desk` directory.
+2. Upload that directory's contents to the root of the existing `maxbaiani26-lab/surgical-review-desk` repository. Replace the old files. The following five files are required:
+   - `index.html`
+   - `app.js`
+   - `pubmed.js`
+   - `assessment.js`
+   - `assessment-worker.mjs`
+3. Commit to the configured GitHub Pages branch (normally `main`). In **Settings → Pages**, the branch configuration should be `main` and `/ (root)`.
+4. After deployment, hard-refresh https://maxbaiani26-lab.github.io/surgical-review-desk/ . The main button should read **Search evidence & assess coverage**.
 
-## Workflow
+No GitHub deployment or repository write was performed as part of this delivery.
 
-1. Enter de-identified procedure and indication details. A draft query is assembled locally until you edit it yourself.
-2. Review and edit the PubMed query. Optionally select publication years, publication type, and sort order.
-3. Click **Search PubMed**. The app sends that query and those filters to official NCBI E-utilities. Editing fields alone never sends a request.
-4. Inspect article metadata, publication types, available abstract, and any notices supplied in the record. DOI links may require publisher payment; PMC links are offered when a PMC identifier is returned. The app retrieves no full text.
-5. Include relevant records in the brief and document their relevance and limitations. Selected references are deduplicated by PMID and remain selected across searches.
-6. Generate the brief. Intake edits and reference notes update it. Copy or download it as plain text. Export includes manual references, selected PubMed references, retrieval dates, query history, filters, available counts, and missing documentation.
-7. Clear the form to discard the in-memory session.
+## Use
 
-## Network behavior and limitations
+1. Enter a de-identified case, including procedure, indication, symptoms, objective findings, prior treatment, and relevant patient factors.
+2. Paste the actual applicable coverage policy excerpt, identifying its plan, section, and version/date. Without an applicable policy, medical literature alone cannot establish coverage and the result remains indeterminate.
+3. Review the query drafted from procedure and diagnosis. Optional query edits, publication dates, type filters, and sorting are available in the PubMed panel.
+4. Click **Search evidence & assess coverage**. The app retrieves up to ten records, includes them without manual selection, then attempts to run the assessment model locally.
+5. Review the draft's reasoning, citations, quotes, limitations, and listed abstracts not analyzed. Use Copy or Download to export the report with the clinical snapshot, evidence, abstracts, and query provenance.
+6. Stop cancels model execution; clear discards the case. Reloading discards case information.
 
-- Uses `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi` and `efetch.fcgi` via ordinary CORS GET requests.
-- Retrieves batches of 10 records, starts requests at least 450 ms apart within this page, and retries HTTP 429/5xx twice with bounded backoff. Each request times out after 15 seconds. Other tabs or users sharing your network can still exhaust NCBI's IP-level quota.
-- Does not use JSONP, a proxy, or simulated fallback records. Live failures are shown explicitly.
-- PubMed exposes the first 10,000 search results through this pagination method. Refine broad searches. Results may change between pages because no fixed history snapshot is used.
-- Does not automatically classify evidence strength or judge study applicability. Returned retraction/correction metadata is not a complete integrity check.
-- Does not store data in localStorage, cookies, analytics, or a server. Reloading loses the session. Queries go to NCBI; copying, downloading, or opening article links is user initiated. Do not enter identifiers into query text.
-- Manual policy and citation text is not independently validated.
-- This prototype has not been clinically validated.
+The button is the explicit request to transmit the displayed search query to NCBI. Typing never starts a network search. Intake controls are disabled while an assessment runs.
 
-## Verification and current blocker
+## Local AI requirements
 
-See `VERIFICATION.md`. Syntax checks and 10 automated service/state tests passed. Tests use explicitly synthetic fixtures only in the test files; production searches do not.
+The application remains a static GitHub Pages site with no backend, API key, paid API, or separate application. The assessment is actual language-model inference implemented with **WebLLM 0.2.85** and **Llama-3.2-3B-Instruct-q4f32_1-MLC**, running in a dedicated browser worker.
 
-**Live PubMed functionality is implemented but not verified end to end.** This workspace rejected NCBI requests with HTTP 403 and the explicit response `Forbidden. Calls to this URL are not allowed.` It also blocked downloading the browser needed for browser tests. This is a workspace access limitation; it does not establish whether NCBI permits CORS from your deployed site. A live API query, browser-origin CORS behavior, XML parsing in a browser, and visual/mobile rendering remain unverified. If CORS is denied from your deployed origin, this implementation will show a connection error; a static-only solution under these constraints cannot be certified until the deployed-origin check succeeds.
+- Requires HTTPS, a WebGPU-capable browser/device, and several GB of available GPU memory. Exact requirements depend on hardware and model context. This is not guaranteed to work on every laptop or phone.
+- The first use downloads large model artifacts and can take several minutes. Model assets may be cached by the browser; case prompts are not explicitly persisted.
+- The pinned runtime is downloaded from jsDelivr. The runtime's model configuration downloads weights and compiled components from MLC's model hosts, including Hugging Face and GitHub-hosted assets.
+- There is no remote inference API. Case content is passed to the local worker, not to NCBI or a model inference service. Only the query and filters go to NCBI; model hosts receive asset requests.
+- The worker clears chat context after generation. Stop terminates it. Case content otherwise exists in page/worker memory until cleared or unloaded.
+- If the model, GPU, CDN, or source access fails, the app shows a technical failure/indeterminate state and does not fake an AI result.
+- Model download has a 15-minute deadline, and generation a 3-minute deadline. The Stop button ends either.
 
-## Test commands (development only)
+Review the model's licensing and restrictions for any use beyond this prototype:
+https://huggingface.co/mlc-ai/Llama-3.2-3B-Instruct-q4f32_1-MLC
 
-The deployed app does not need Node or Python. If available locally, run:
+## Evidence and validation rules
+
+- The model receives full available abstracts that fit a bounded input, not article titles as substitute evidence. Missing-abstract and retracted/expression-of-concern records are included in the exported record list but not provided as evidentiary support to the model.
+- The case/policy budget is 7,000 characters; the abstract/title budget is 10,000 characters. No partial abstract is silently substituted. The local model context is set to 8,192 tokens; character limits are only a conservative heuristic, and tokenization can still cause a visible failure.
+- All records returned by the first retrieval are included in the report. Records skipped for model context are listed, and any context-omitted abstract withholds a directional recommendation.
+- PMID membership and exact policy, case, and abstract quote presence are checked. Fabricated identifiers or nonmatching quotes reject the draft.
+- Directional support requires cited supportive evidence and stated policy comparisons marked met. Negative support requires an explicit case-specific policy conflict with an actual quoted case fact. A missing policy, absent substantiated evidence, unaddressed supplied abstracts, or certain validation gaps produce indeterminate.
+- These checks do **not** validate clinical reasoning, detect all missing policy conditions, prove applicability, or determine whether quoted text supports the model's interpretation. The small general-purpose model can make serious mistakes even when all formatting checks pass.
+- A limited search of ten records is not a systematic review. PubMed indexing, search rank, recency, publication type, and absence of a notice establish neither reliability nor coverage.
+- Manual references are labeled unverified; they are not independently retrieved. Full text is not fetched. A clinical specialist must verify the sources, policy, and patient-specific interpretation.
+- This prototype is not clinically validated and must not be used as an autonomous approval/denial system or to withhold care.
+
+## Verification
+
+See `VERIFICATION.md`. Nineteen automated service, validation, and workflow-state tests pass. They use synthetic test data and mocked AI/network responses; they do not establish actual model quality.
+
+Live PubMed CORS, actual model download/inference, visual/mobile rendering, and end-to-end performance remain unverified in this workspace. NCBI and browser installation downloads were rejected by this workspace's network policy during the prior integration. No claim is made that the new model can load here or on every device.
+
+Development checks (not required by deployed app):
 
 ```
 node --check app.js
 node --check pubmed.js
+node --check assessment.js
+node --check assessment-worker.mjs
 node --test tests/*.test.cjs
 ```
 
-For an HTTP origin test locally, serve the parent directory containing the `surgical-review-desk` folder:
+## Technical sources and attribution
 
-```
-python3 -m http.server 8000
-```
-
-Open `http://localhost:8000/surgical-review-desk/` and perform the deployment acceptance checks in `VERIFICATION.md`.
-
-## Official API documentation and attribution
-
-- NLM E-utilities guide: https://www.nlm.nih.gov/dataguide/eutilities/utilities.html
-- NCBI API documentation: https://www.ncbi.nlm.nih.gov/books/NBK25499/
-- NCBI usage requirements: https://www.ncbi.nlm.nih.gov/books/NBK25497/
+- WebLLM usage: https://webllm.mlc.ai/docs/user/basic_usage.html
+- Web workers: https://webllm.mlc.ai/docs/user/advanced_usage.html
+- API and context options: https://webllm.mlc.ai/docs/user/api_reference.html
+- Official model registry: https://github.com/mlc-ai/web-llm/blob/main/src/config.ts
+- NLM E-utilities: https://www.nlm.nih.gov/dataguide/eutilities/utilities.html
+- NCBI usage: https://www.ncbi.nlm.nih.gov/books/NBK25497/
 - Data supplied by NCBI, U.S. National Library of Medicine: https://www.ncbi.nlm.nih.gov/
 - NCBI Disclaimer and Copyright: https://www.ncbi.nlm.nih.gov/About/disclaimer.html
 
-Abstracts may contain copyrighted material. If operating a shared production service, review NCBI's current usage requirements, developer identification/registration guidance, and institutional requirements. No contact information or registration is fabricated in this prototype.
+Abstracts may contain copyrighted material. API calls are batched and spaced within this page; other tabs/users sharing an IP can still exhaust quotas. No contact details, registrations, policy contents, citations, or clinical validation are fabricated.
