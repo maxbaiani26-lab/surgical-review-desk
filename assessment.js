@@ -1,7 +1,7 @@
 /* Evidence-constrained assessment inputs and validation. No medical scoring rules. */
 (function(root) {
   'use strict';
-  const MODEL = 'Llama-3.2-3B-Instruct-q4f32_1-MLC';
+  const MODEL = 'HuggingFaceTB/SmolLM2-1.7B-Instruct';
   const labels = {support_coverage:'Draft: support coverage',do_not_support_coverage:'Draft: policy does not support coverage',indeterminate:'Indeterminate — specialist review needed'};
   const clean = value => String(value || '').replace(/\s+/g,' ').trim();
   function abstractText(record) {return (record.abstracts || []).map(a => (a.label ? a.label+': ' : '')+a.text).join('\n');}

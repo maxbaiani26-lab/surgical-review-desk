@@ -64,27 +64,25 @@ function invalidate(){
   renderAssessment();renderRecords();notice('Inputs changed. Start a new assessment to retrieve and analyze evidence.');
 }
 async function localInference(payload,token){
-  if(!window.isSecureContext||!navigator.gpu)throw new Error('Local AI needs a secure HTTPS page and a WebGPU-compatible browser/device. PubMed evidence is available below, but no AI assessment was generated.');
-  notice('PubMed evidence retrieved. Checking local AI hardware…');
-  const adapter=await deadlineTask(navigator.gpu.requestAdapter(),10000,'The WebGPU hardware check did not respond within 10 seconds. Evidence remains available; try a WebGPU-compatible browser.');
-  if(!adapter)throw new Error('No suitable WebGPU adapter is available. No AI assessment was generated.');
+  if(typeof Worker==='undefined'||typeof WebAssembly==='undefined')throw new Error('CPU AI requires browser Web Workers and WebAssembly. Retrieved evidence remains available.');
+  notice('Preparing CPU AI. The first model download is about 1.4 GB plus runtime files. No GPU required.');
   if(token!==revision)throw new Error('Assessment stopped.');
-  if(!worker)worker=new Worker('./assessment-worker.mjs?v=20261019b',{type:'module'});
+  if(!worker)worker=new Worker('./assessment-worker.mjs?v=20261019cpu1',{type:'module'});
   return new Promise((resolve,reject)=>{
     let timer;
     const cleanup=()=>{clearTimeout(timer);clearTimeout(activityTimer);workerReject=null;if(worker){worker.onmessage=null;worker.onerror=null;}};
     const fail=message=>{cleanup();worker?.terminate();worker=null;reject(new Error(message));};
     const deadline=ms=>{clearTimeout(timer);timer=setTimeout(()=>fail('Local AI timed out. No coverage conclusion was generated.'),ms);};
-    workerReject=()=>fail('Assessment stopped.');deadline(3*60*1000);
+    workerReject=()=>fail('Assessment stopped.');deadline(20*60*1000);
     let activityTimer=setTimeout(()=>fail('The AI runtime did not respond within 30 seconds. Model/CDN access may be blocked. Retrieved evidence remains available.'),30000);
-    worker.onerror=()=>fail('The local AI worker or model download could not load. Check network access, WebGPU support, available GPU memory, and model-host access. No coverage conclusion was generated.');
+    worker.onerror=()=>fail('The local AI worker or model download could not load. Check network access, available RAM, WebAssembly support, and model-host access. No coverage conclusion was generated.');
     worker.onmessage=event=>{
       const msg=event.data;clearTimeout(activityTimer);
-      activityTimer=setTimeout(()=>fail('No AI progress for 90 seconds. The model download or inference stalled. Retrieved evidence remains available.'),90000);
+      activityTimer=setTimeout(()=>fail('No AI progress for five minutes. The model download or inference stalled. Retrieved evidence remains available.'),5*60*1000);
       if(token!==revision){fail('Assessment stopped.');return;}
-      if(msg.type==='progress'||msg.type==='generating'){notice(msg.message);if(msg.type==='generating')deadline(3*60*1000);}
+      if(msg.type==='progress'||msg.type==='generating'){notice(msg.message);if(msg.type==='generating')deadline(20*60*1000);}
       if(msg.type==='error')fail('Local AI failed: '+msg.message);
-      if(msg.type==='result'){cleanup();resolve(msg.text);}
+      if(msg.type==='result'){cleanup();worker?.terminate();worker=null;resolve(msg.text);}
     };
     try{worker.postMessage({type:'assess',model:Coverage.MODEL,messages:Coverage.prompt(payload),schema:Coverage.schema});}catch(error){fail(error.message);}
   });

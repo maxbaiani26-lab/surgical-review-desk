@@ -17,7 +17,7 @@ test('typing drafts local query, never starts network; completeness checklist is
 });
 test('one action includes every returned record; model-unavailable state never invents a recommendation',async()=>{
  const t=setup();fill(t);await t.run('assess()');assert.equal(t.requests.length,1);assert.equal(t.run('articles.size'),1);assert.equal(t.run('assessment.recommendation'),'indeterminate');
- assert.match(t.node('searchStatus').textContent,/WebGPU/);const report=t.run('buildBrief()');assert.match(report,/PMID: 123456/);assert.match(report,/Automatically included/);assert.match(report,/No model assessment generated/);
+ assert.match(t.node('searchStatus').textContent,/WebAssembly/);const report=t.run('buildBrief()');assert.match(report,/PMID: 123456/);assert.match(report,/Automatically included/);assert.match(report,/No model assessment generated/);
 });
 test('successful mocked local generation is grounded; editing case clears assessment and evidence',async()=>{
  const t=setup();fill(t);
@@ -53,4 +53,17 @@ test('deadline wrapper fails stalled asynchronous operations explicitly',async()
 test('catalog has distinct procedure names and explicit official US source links',()=>{
  const catalog=require('../procedures.js');assert.equal(Object.keys(catalog).length,11);
  for(const list of Object.values(catalog)){assert.ok(list.length>=2);assert.equal(new Set(list.map(x=>x.name)).size,list.length);for(const entry of list)assert.ok(['medlineplus.gov','www.facs.org'].includes(new URL(entry.source).hostname));}
+});
+test('CPU main workflow starts a worker with no navigator.gpu and releases it after completion',async()=>{
+ const t=setup();let terminated=false,sent;
+ t.context.WebAssembly={};t.context.Worker=class{postMessage(data){sent=data;queueMicrotask(()=>this.onmessage({data:{type:'result',text:'{"synthetic":true}'}}))}terminate(){terminated=true}};
+ const result=await t.run('localInference(Coverage.prepare(readFields(),[]),revision)');assert.equal(result,'{"synthetic":true}');assert.equal(sent.model,Coverage.MODEL);assert.equal(terminated,true);assert.equal(t.run('worker'),null);assert.equal(t.context.navigator.gpu,undefined);
+});
+test('CPU main worker errors reject clearly and release the worker',async()=>{
+ const t=setup();let terminated=false;t.context.WebAssembly={};t.context.Worker=class{postMessage(){queueMicrotask(()=>this.onmessage({data:{type:'error',message:'Synthetic out of memory'}}))}terminate(){terminated=true}};
+ await assert.rejects(t.run('localInference(Coverage.prepare(readFields(),[]),revision)'),/out of memory/);assert.equal(terminated,true);assert.equal(t.run('worker'),null);
+});
+test('Stop cancels a running CPU worker without creating a directional result',async()=>{
+ const t=setup();let terminated=false;t.context.WebAssembly={};t.context.Worker=class{postMessage(){}terminate(){terminated=true}};
+ const pending=t.run('localInference(Coverage.prepare(readFields(),[]),revision)');t.node('cancelBtn').events.click();await assert.rejects(pending,/Assessment stopped/);assert.equal(terminated,true);assert.equal(t.run('assessment.recommendation'),'indeterminate');
 });

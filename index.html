@@ -11,10 +11,10 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="shell topinner"><div class="brand"><div class="logo">＋</div><div>SurgiReview<small>Clinical request review</small></div></div><div class="topright"><span class="demo-pill">Prototype</span><span>U.S. surgical review workflow</span></div></div></header>
+<header class="topbar"><div class="shell topinner"><div class="brand"><div class="logo">＋</div><div>SurgiReview<small>Clinical request review</small></div></div><div class="topright"><span class="demo-pill">CPU · Prototype</span><span>U.S. surgical review workflow</span></div></div></header>
 <main class="shell">
   <section class="intro"><div><p class="eyebrow">Standardized clinical review</p><h1>From clinical case to coverage assessment.</h1><p>Enter the case and policy. Retrieve PubMed evidence and generate a reasoned draft recommendation in one action.</p></div><div class="case-ref">LOCAL DRAFT<strong id="caseId">SR-2026-001</strong></div></section>
-  <div class="notice"><div class="notice-icon">ⓘ</div><div><b>Clinical decision support prototype.</b> Use de-identified information only. PubMed receives the submitted search terms; the assessment model runs locally in your browser. The first AI run downloads model files and needs WebGPU with several GB of available GPU memory. Outputs are unvalidated drafts for specialist review, not insurer decisions.</div></div>
+  <div class="notice"><div class="notice-icon">ⓘ</div><div><b>Clinical decision support prototype.</b> Use de-identified information only. PubMed receives the submitted search terms; the assessment model runs locally in your browser. CPU mode uses WebAssembly in a background worker: no GPU or API key required. First use downloads about 1.4 GB of model files plus runtime assets. Loading needs several GB of free RAM; CPU generation may take many minutes. Model assets may be cached; clinical inputs stay in memory. Outputs are unvalidated drafts for specialist review, not insurer decisions.</div></div>
   <div id="workflowStatus" class="notice" role="status" aria-live="polite">Ready. Choose a specialty and procedure, or fill the fictional example.</div>
   <div class="layout">
     <section class="card"><div class="cardhead"><h2>Request details</h2><span class="step">STRUCTURED INTAKE</span></div><div class="formbody">
@@ -77,4 +77,4 @@ window.addEventListener('error',function(event){
 window.addEventListener('DOMContentLoaded',function(){
   if(!window.surgiReviewStarted)document.getElementById('workflowStatus').textContent='Application initialization failed. Upload all six application files from the same release and hard-refresh the page.';
 });
-</script><script src="./procedures.js?v=20261019b" defer></script><script src="./pubmed.js?v=20261019b" defer></script><script src="./assessment.js?v=20261019b" defer></script><script src="./app.js?v=20261019b" defer></script><noscript><p>JavaScript is required. Enable it to use the procedure menus and PubMed search.</p></noscript></body></html>
+</script><script src="./procedures.js?v=20261019cpu1" defer></script><script src="./pubmed.js?v=20261019cpu1" defer></script><script src="./assessment.js?v=20261019cpu1" defer></script><script src="./app.js?v=20261019cpu1" defer></script><noscript><p>JavaScript is required. Enable it to use the procedure menus and PubMed search.</p></noscript></body></html>
