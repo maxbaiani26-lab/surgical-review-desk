@@ -1,36 +1,35 @@
-# CPU release verification — October 19, 2026
+# Verification — evidence workflow, October 19, 2026
 
-## Completed
+21 tests passed using synthetic fixtures and mocked NCBI responses. No synthetic results are loaded by the deployed app. Tests are in tests/; run `node --test tests/*.test.cjs`.
 
-- JavaScript syntax checks on all five executable JavaScript/module files.
-- 32 Node tests passed (synthetic data; mocked network/model). The CPU runner explicitly selects device: wasm and dtype: q4, configures one WASM thread, attaches schema instructions, checks actual prompt token length, accepts only complete JSON, and reports model asset failures without substitutes.
-- Main workflow starts without navigator.gpu, terminates the worker on success/error/cancel, and exports retained PubMed records if inference fails.
-- Dependent specialty/procedure selection, per-entry official source links, complete fictional example without transmission, stale-input clearing, timeout wrapper and prior assessment validation tests pass.
-- Source review confirmed the model's q4 ONNX artifact (about 1.41 GB) and maximum 8,192-token context. Asset download size is not runtime RAM consumption.
+Completed:
 
-## Unverified
+- Full retrieval over 437 matching records, not first ten.
+- Recursive UID partitioning over 10,013 simulated records, with no partition exceeding the 10,000-ID retrieval window.
+- Reconciliation of page counts, final totals, PMID uniqueness and requested/returned article identifiers.
+- Explicit incomplete status for missing records, changed counts, truncated pages, API errors and cancellation.
+- Throttling, retries and validated query/filter parameters from the existing NCBI client.
+- Literal relevance flags do not produce automatic exclusions; reviewer reasons required for completed screening counts.
+- Unverified policy, undocumented comparisons and incomplete evidence do not produce an authorization.
+- Fictional sample fills all intake fields without requests. All HTML IDs unique.
+- All 53 simulated records export even when only 25 appear on a display page.
+- Case changes invalidate previous research. Partial results remain exportable.
+- Syntax checks for app.js, pubmed.js, procedures.js and review.js.
 
-- Actual Transformers.js/WASM/model downloads and first real CPU generation. This workspace restricts outbound network access; browser installation was also blocked during prior work.
-- Live HTTP(S) browser CORS access to NCBI, mobile rendering, cache reuse/quota behavior, actual latency/RAM and end-to-end performance on the user's machine.
-- Clinical reasoning, policy interpretation, and adequacy of the small general-purpose model. This is not a clinically validated system.
+Unverified:
 
-## Manual acceptance on the deployed site
+- Live NCBI API access/CORS from a browser, real UID-range query behavior, provider count changes and large real searches.
+- Browser rendering, mobile layout, actual throughput/RAM and sustained long retrievals.
+- Clinical relevance/quality, completeness of literature discovery, insurance policy applicability, and correctness of reviewer-entered findings. No clinical validation.
 
-1. Upload all six app files together. Hard-refresh; confirm CPU · Prototype.
-2. Fill the example. Confirm all intake fields, fictional policy and PubMed query appear; no search runs automatically.
-3. Start assessment. Confirm PubMed records appear, then CPU asset download progress. No GPU prompt/error should be needed.
-4. Keep the tab open through model download/initialization and generation. Confirm valid assessments include quoted sources; malformed responses fail explicitly.
-5. Test Stop during loading and generation; confirm controls restore and no partial recommendation is presented.
-6. Verify citation and policy reasoning manually. Test export even when AI fails. Edit a case field; confirm previous results clear.
-7. Inspect network requests if needed: only public model/runtime assets and submitted NCBI queries should be sent, with no clinical prompt sent to a remote inference service.
+The supplied video was inspected using extracted frames around its step 4 and results. It shows coverage/documentation fields, criteria/document references, cited evidence and a specialist-review-required state. It does not establish the implementation or correctness of the video's unseen analysis. This release implements an auditable deterministic workflow without claiming equivalent autonomous medical reasoning.
 
-Development commands:
+Manual deployment acceptance:
 
-```
-node --check app.js
-node --check procedures.js
-node --check pubmed.js
-node --check assessment.js
-node --check assessment-worker.mjs
-node --test tests/*.test.cjs
-```
+1. Upload all five app files; hard-refresh and confirm Evidence workflow.
+2. Fill example; verify procedure menu, fictional policy, clause editor and editable PubMed query.
+3. Run a small live query, compare total with PubMed, inspect real PMIDs/abstracts and reconciliation status.
+4. Run a query exceeding 25 records; verify next/previous pages and that export contains every retrieved PMID.
+5. Stop retrieval; verify incomplete state and retained partial records.
+6. Enter relevance decisions/reasons and policy clause findings; inspect rule-driven status changes.
+7. Export JSON and text, and verify all pending/included/excluded records and source provenance.

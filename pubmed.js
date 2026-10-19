@@ -103,6 +103,46 @@
       }
     };
   }
-  root.PubMed = {buildQuery, makeURL, parseRecords, createClient};
+  async function retrieveAll(client,criteria,{signal,onProgress=()=>{},onBatch=()=>{},pageSize=200}={}){
+    if(!Number.isInteger(pageSize)||pageSize<1||pageSize>1000)throw new Error('Invalid page size.');
+    const check=()=>{if(signal?.aborted)throw new Error('Retrieval stopped. Search is incomplete.');};
+    const seen=new Set(),partitions=[],messages=new Set();let fetched=0;
+    const search=async(c,offset=0)=>{check();const r=await client.search(c,offset,pageSize);check();r.messages.forEach(m=>messages.add(m));return r;};
+    const rootResult=await search(criteria);
+    onProgress({total:rootResult.count,identified:0,retrieved:0,translation:rootResult.translation,partitions:[],phase:'Identifying all query matches'});
+    async function collect(c,first,lo=0,hi=999999999999){
+      check();
+      if(first.count>10000){
+        if(lo>=hi)throw new Error('NCBI partition cannot be subdivided. Search is incomplete.');
+        const mid=Math.floor((lo+hi)/2);
+        for(const [a,b] of [[lo,mid],[mid+1,hi]]){
+          const term=`(${criteria.term}) AND (${a}:${b}[UID])`;
+          const child={...criteria,term};const r=await search(child);await collect(child,r,a,b);
+        }
+        return;
+      }
+      partitions.push({term:c.term,count:first.count});let processed=0;
+      for(let offset=0;offset<first.count;offset+=pageSize){
+        const r=offset?await search(c,offset):first;
+        if(r.count!==first.count)throw new Error('PubMed result count changed during pagination. Search is incomplete; rerun.');
+        const expected=Math.min(pageSize,first.count-offset);
+        if(r.ids.length!==expected)throw new Error('PubMed returned an incomplete identifier page. Search is incomplete.');
+        for(const id of r.ids){if(seen.has(id))throw new Error('Duplicate PMID during pagination. Search is incomplete; rerun.');seen.add(id);processed++;}
+        for(let i=0;i<r.ids.length;i+=50){
+          check();const ids=r.ids.slice(i,i+50),records=await client.fetchRecords(ids);check();
+          const returned=new Set(records.map(x=>x.pmid));
+          if(records.some(x=>!ids.includes(x.pmid))||returned.size!==records.length)throw new Error('Unexpected article identifiers returned. Search is incomplete.');
+          fetched+=records.length;onBatch(records);
+          onProgress({total:rootResult.count,identified:seen.size,retrieved:fetched,translation:rootResult.translation,partitions:[...partitions],phase:'Retrieving every query match'});
+          if(ids.some(id=>!returned.has(id)))throw new Error('Some PubMed article records were not returned. Search is incomplete.');
+        }
+      }
+      if(processed!==first.count)throw new Error('Identifier count mismatch. Search is incomplete.');
+    }
+    await collect(criteria,rootResult);
+    if(seen.size!==rootResult.count||fetched!==rootResult.count)throw new Error('Final count differs from initial PubMed matches. Search is incomplete; rerun.');
+    return {count:rootResult.count,retrieved:fetched,translation:rootResult.translation,messages:[...messages],partitions,completedAt:new Date().toISOString()};
+  }
+  root.PubMed = {buildQuery, makeURL, parseRecords, createClient,retrieveAll};
   if (typeof module !== 'undefined') module.exports = root.PubMed;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

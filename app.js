@@ -1,168 +1,78 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const textFields=['procedure','specialty','urgency','diagnosis','setting','symptoms','findings','treatment','factors','criteria','literature','reviewNotes'];
-const fieldLabels={procedure:'Procedure',specialty:'Specialty',urgency:'Requested timing',diagnosis:'Indication',setting:'Planned setting',symptoms:'Symptoms and functional impact',findings:'Objective findings',treatment:'Prior treatment and response',factors:'Patient-specific factors',criteria:'User-supplied coverage policy',literature:'Manual references (unverified)',reviewNotes:'Reviewer notes'};
-const articles=new Map();
-let assessment=null, assessmentInput=null, runFields=null, currentSearch=null, busy=false, queryTouched=false, revision=0, worker=null, workerReject=null;
-const readFields=()=>Object.fromEntries(textFields.map(id=>[id,$(id).value.trim()]));
-function notice(message,error=false){$('workflowStatus').textContent=message;$('workflowStatus').style.borderLeftColor=error?'#a1413b':'#087e78';$('searchStatus').textContent=message;$('searchStatus').className='search-status'+(error?' error':'');}
-function toast(message){$('toast').textContent=message;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2000);}
+const fieldIDs=['specialty','procedure','urgency','diagnosis','setting','symptoms','findings','treatment','factors','criteria','literature','reviewNotes','payer','policyName','policyDate','documents'];
+const articles=new Map(),reviews={};let policyRows=[],search=null,controller=null,busy=false,queryTouched=false,page=0;
+const pageSize=25,fields=()=>Object.fromEntries(fieldIDs.map(k=>[k,$(k).value.trim()]));
+function notice(message,error=false){for(const id of ['workflowStatus','searchStatus']){$(id).textContent=message;$(id).classList.toggle('error',error);}}
 function updateProcedures(selected=''){
-  const list=ProcedureCatalog[$('specialty').value]||[];
-  $('procedure').innerHTML='<option value="">'+(list.length?'Select procedure':'Choose a specialty first')+'</option>'+list.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
-  $('procedure').disabled=!list.length;
-  $('procedure').value=list.some(p=>p.name===selected)?selected:'';
-  updateProcedureSource();
+ const list=ProcedureCatalog[$('specialty').value]||[];
+ $('procedure').innerHTML='<option value="">'+(list.length?'Select procedure':'Choose a specialty first')+'</option>'+list.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+ $('procedure').value=list.some(x=>x.name===selected)?selected:'';$('procedure').disabled=!list.length;
+ updateSource();
 }
-function updateProcedureSource(){
-  const item=(ProcedureCatalog[$('specialty').value]||[]).find(p=>p.name===$('procedure').value);
-  $('procedureSource').innerHTML=item?`Source: <a href="${esc(item.source)}" target="_blank" rel="noopener noreferrer">${item.source.includes('facs.org')?'American College of Surgeons':'MedlinePlus (U.S. National Library of Medicine)'}</a>. Curated examples; not a coverage list.`:'Choose a specialty, then a procedure. Curated U.S.-source examples; not exhaustive. Overlapping specialties may perform the same procedure.';
+function updateSource(){const p=(ProcedureCatalog[$('specialty').value]||[]).find(x=>x.name===$('procedure').value);$('procedureSource').innerHTML=p?`Procedure source: <a href="${esc(p.source)}" target="_blank" rel="noopener noreferrer">Official U.S. source</a>. Curated menu; not a coverage list.`:'Choose specialty, then procedure.';}
+function draftQuery(force=false){if(queryTouched&&!force)return;$('pubmedQuery').value=[$('procedure').value,$('diagnosis').value].map(s=>s.trim()).filter(Boolean).map(s=>'('+s+')').join(' AND ');}
+function clearResearch(){articles.clear();Object.keys(reviews).forEach(k=>delete reviews[k]);search=null;page=0;renderRecords();renderResult();}
+function setBusy(value){busy=value;for(const id of ['reviewForm','searchForm'])$(id).querySelectorAll('input,select,textarea,button').forEach(x=>x.disabled=value);$('cancelBtn').classList.toggle('hidden',!value);$('stopTop').classList.toggle('hidden',!value);$('assessBtn').textContent=value?'Retrieving all query matches…':'Retrieve evidence & build review →';if(!value)$('procedure').disabled=!$('specialty').value;renderPolicies();}
+function renderPolicies(){
+ $('policyRows').innerHTML=policyRows.map((r,i)=>`<div class="assessment-block"><label for="clause${i}">Exact policy clause ${i+1}</label><textarea id="clause${i}" data-row="${i}" data-key="clause">${esc(r.clause)}</textarea><label for="state${i}">Reviewer-reported alignment</label><select id="state${i}" data-row="${i}" data-key="status"><option value="unknown" ${r.status==='unknown'?'selected':''}>Unverified / needs clarification</option><option value="met" ${r.status==='met'?'selected':''}>Reported met</option><option value="not_met" ${r.status==='not_met'?'selected':''}>Reported not met</option></select><label for="fact${i}">Supporting case fact</label><textarea id="fact${i}" data-row="${i}" data-key="fact">${esc(r.fact)}</textarea><label for="doc${i}">Document and page / section</label><input id="doc${i}" data-row="${i}" data-key="document" value="${esc(r.document)}"><button type="button" class="btn ghost" data-remove="${i}">Remove clause</button></div>`).join('')||'<p class="disclaimer">Add policy clauses to record your comparison. Free text is not automatically interpreted.</p>';
+ $('policyRows').querySelectorAll('input,select,textarea,button').forEach(x=>x.disabled=busy);
 }
-function deadlineTask(task,ms,message){
-  let timer;return Promise.race([task,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),ms)})]).finally(()=>clearTimeout(timer));
+function summary(){return EvidenceReview.summarize([...articles.values()],reviews,policyRows,$('policyVerified').checked,Boolean(search?.complete));}
+function renderResult(){
+ const s=summary();$('resultArea').innerHTML=`<div class="result-top"><div class="result-label">Nonbinding preliminary review · rules only</div><h3>${esc(s.outcome)}</h3></div><div class="result-body"><p>Query matches: ${search?.count??'Not searched'}<br>Records retrieved: ${articles.size}<br>Reviewer-included: ${s.included}<br>Reviewer-excluded with reason: ${s.excluded}<br>Awaiting a documented relevance decision: ${s.pending}</p><p><b>Retrieval:</b> ${search?esc(search.status):'Not started'}</p><p><b>Policy:</b> ${$('policyVerified').checked?'User confirms applicable policy/version':'Unverified'}</p><p class="disclaimer">Policy alignment and relevance are entered by the reviewer. Algorithms organize records and apply explicit status rules; they do not interpret studies or determine medical necessity. No automated insurer decision is made.</p><div class="actions"><button type="button" id="copyBtn" class="btn secondary">Copy review</button><button type="button" id="downloadBtn" class="btn secondary">Download report</button><button type="button" id="auditBtn" class="btn secondary">Download full audit JSON</button></div></div>`;
+ $('copyBtn').onclick=copyReport;$('downloadBtn').onclick=()=>download(report(),'surgireview-evidence-review.txt','text/plain');$('auditBtn').onclick=()=>download(JSON.stringify(audit(),null,2),'surgireview-full-audit.json','application/json');
 }
-function draftQuery(force=false){
-  if(queryTouched&&!force)return;
-  $('pubmedQuery').value=[$('procedure').value.trim(),$('diagnosis').value.trim()].filter(Boolean).map(s=>'('+s+')').join(' AND ');
-}
-function sourceText(ref){return `${ref.title}\nAuthors: ${ref.authors.join('; ')||'Unavailable'}\nYear: ${ref.year||'Unavailable'} | Journal: ${ref.journal||'Unavailable'}\nPMID: ${ref.pmid}\nDOI: ${ref.doi||'Unavailable'}\nPublication types: ${ref.types.join('; ')||'Unavailable'}\nPubMed: ${ref.pubmedURL}${ref.doi?'\nPublisher link: https://doi.org/'+encodeURI(ref.doi):''}${ref.pmc?'\nPMC link: https://pmc.ncbi.nlm.nih.gov/articles/'+ref.pmc+'/':''}\nRetrieved: ${ref.retrievedAt}\nNotices: ${ref.notices.map(n=>n.type+(n.pmid?' (PMID '+n.pmid+')':'')).join('; ')||'None supplied; not a complete integrity check'}\nAutomatically included. ${ref.abstracts.length?'Abstract available':'No abstract supplied'}; full text not retrieved.\nModel use: ${assessment?.analyzedPMIDs.includes(ref.pmid)?'Supplied for analysis':assessmentInput?.skipped.find(s=>s.pmid===ref.pmid)?.reason||'No completed analysis'}\nABSTRACT:\n${Coverage.abstractText(ref)||'Unavailable'}`;}
-function buildBrief(){
-  const fields=runFields||readFields(),s=currentSearch;
-  const result=assessment?`DRAFT COVERAGE ASSESSMENT\n${Coverage.labels[assessment.recommendation]}\n${assessment.summary}\n\nPOLICY ANALYSIS\n${assessment.policy_analysis.map(p=>`Policy clause: "${p.clause_quote}"\nCase fact: "${p.case_quote||'Unknown'}"\nAlignment: ${p.alignment}\nReason: ${p.reason}`).join('\n\n')||'No substantiated clause comparison.'}\n\nEVIDENCE ANALYSIS\n${assessment.evidence_analysis.map(e=>`PMID ${e.pmid} | ${e.direction}\nAbstract quote: "${e.abstract_quote}"\nInterpretation: ${e.interpretation}`).join('\n\n')||'No completed abstract analysis.'}\n\nUNCERTAINTIES\n${assessment.uncertainties.map(s=>'- '+s).join('\n')}\n\nNEXT STEP\n${assessment.next_step}\n\nModel: ${assessment.model}\nGenerated at: ${assessment.generatedAt}\nValidation: ${assessment.validation}\nSupplied for model analysis: ${assessment.analyzedPMIDs.join(', ')||'None'}\nNot supplied: ${assessment.skipped.map(s=>s.pmid+' — '+s.reason).join('; ')||'None'}\n`:'No AI coverage assessment has been completed. This is a case/evidence export only.\n';
-  return `SURGIREVIEW — EVIDENCE-ASSISTED COVERAGE DRAFT\nExported at: ${new Date().toISOString()}\n\n${result}\nCASE SNAPSHOT\n${textFields.map(id=>`${fieldLabels[id]}: ${fields[id]||'Not supplied'}`).join('\n\n')}\n\nPUBMED SEARCH\n${s?`Submitted query: ${s.criteria.query}\nExact search term: ${s.criteria.term}\nFilters: from ${s.criteria.from||'any'} through ${s.criteria.to||'any'}; type ${s.criteria.type||'all'}; sort ${s.criteria.sort}\nNCBI translation: ${s.translation||'Unavailable'}\nRetrieved at: ${s.retrievedAt||'Not retrieved'}\nTotal matches: ${s.count??'Unavailable'}\nRecords included: ${articles.size}\nNCBI messages: ${s.messages.join('; ')||'None'}\nStatus: ${s.status}${s.error?'\nError: '+s.error:''}`:'No search completed.'}\n\nAUTOMATICALLY INCLUDED PUBMED RECORDS\n${[...articles.values()].map(sourceText).join('\n\n---\n\n')||'None'}\n\nLIMITATIONS\nThis unvalidated, nonbinding draft is not an insurer authorization or treatment recommendation. Clinical evidence and policy eligibility are distinct. A limited search of up to ten records is not a systematic review. Source quote presence does not verify clinical correctness or policy interpretation. Evidence absence never establishes noncoverage. A qualified specialist must review the full sources and applicable plan. The model retrieves no full text.\n\nApp: https://maxbaiani26-lab.github.io/surgical-review-desk/\nNCBI data: https://www.ncbi.nlm.nih.gov/\nNCBI Disclaimer and Copyright: https://www.ncbi.nlm.nih.gov/About/disclaimer.html\n`;
-}
-function renderAssessment(){
-  const r=assessment;
-  if(!r){$('resultArea').innerHTML='<div class="result-body"><div class="empty-panel">No current coverage assessment. Enter the case and policy, then choose Search evidence &amp; assess coverage. Editing the inputs clears the previous assessment.</div></div>';return;}
-  const state=r.recommendation==='support_coverage'?'ready':'gaps';
-  $('resultArea').innerHTML=`<div class="result-top"><div class="result-label">Nonbinding assessment draft</div><div class="status ${state}"><span class="dot"></span><span>${Coverage.labels[r.recommendation]}</span></div></div><div class="result-body"><p style="font-size:13px">${esc(r.summary)}</p><div class="rule"></div><h3>Why: policy and case</h3>${r.policy_analysis.map(p=>`<div class="assessment-block"><p><b>${esc(p.alignment.replace('_',' '))}</b> — ${esc(p.reason)}</p><blockquote>Policy: ${esc(p.clause_quote)}</blockquote><p>Case: ${esc(p.case_quote||'Not established from the case')}</p></div>`).join('')||'<p class="disclaimer">No substantiated policy comparison is available.</p>'}<div class="rule"></div><h3>Why: retrieved PubMed evidence</h3>${r.evidence_analysis.map(e=>`<div class="assessment-block"><p><a href="https://pubmed.ncbi.nlm.nih.gov/${e.pmid}/" target="_blank" rel="noopener noreferrer"><b>PMID ${e.pmid}</b></a> · ${esc(e.direction)}</p><p>${esc(e.interpretation)}</p><blockquote>${esc(e.abstract_quote)}</blockquote></div>`).join('')||'<p class="disclaimer">No substantiated abstract analysis is available.</p>'}<div class="rule"></div><h3>Uncertainty and limitations</h3><ul style="padding-left:18px;font-size:12px">${r.uncertainties.map(u=>'<li>'+esc(u)+'</li>').join('')}</ul><p class="disclaimer">${esc(r.validation)}</p><p class="disclaimer" style="margin-top:8px">Limited search of up to ten records; not a systematic review. Model interpretation can be wrong even when quotes match.</p><div class="rule"></div><h3>Next step</h3><p style="font-size:12px">${esc(r.next_step)}</p><p class="assessment-footer">Model: ${esc(r.model)}<br>${esc(r.generatedAt)}<br>Abstracts supplied for analysis: ${r.analyzedPMIDs.length}<br>${r.skipped.length?'Not analyzed: '+r.skipped.map(s=>esc(s.pmid+' — '+s.reason)).join('; '):''}</p><div class="actions" style="margin-top:16px"><button type="button" class="btn secondary" id="copyBtn">Copy assessment</button><button type="button" class="btn secondary" id="downloadBtn">Download report</button></div></div>`;
-  $('copyBtn').addEventListener('click',copyBrief);$('downloadBtn').addEventListener('click',downloadBrief);
-}
-function articleHTML(ref){
-  const notices=ref.notices.filter(n=>/retract|correct|errat|concern/i.test(n.type));
-  const note=assessmentInput?.skipped.find(s=>s.pmid===ref.pmid)?.reason;
-  return `<article class="article"><h4>${esc(ref.title)}</h4><p class="authors">${esc(ref.authors.join('; ')||'Authors unavailable')}</p><p>${esc(ref.journal||'Journal unavailable')} · ${esc(ref.year||'Year unavailable')}<br>Types: ${esc(ref.types.join('; ')||'Unavailable')}<br>PMID ${ref.pmid}${ref.doi?' · DOI '+esc(ref.doi):' · DOI unavailable'}</p>${notices.length?'<div class="flags">'+notices.map(n=>esc(n.type)+(n.pmid?' — PMID '+esc(n.pmid):'')).join('<br>')+'</div>':''}<div class="article-links"><a href="${ref.pubmedURL}" target="_blank" rel="noopener noreferrer">PubMed record ↗</a>${ref.doi?`<a href="https://doi.org/${esc(encodeURI(ref.doi))}" target="_blank" rel="noopener noreferrer">Publisher / DOI ↗</a>`:''}${ref.pmc?`<a href="https://pmc.ncbi.nlm.nih.gov/articles/${ref.pmc}/" target="_blank" rel="noopener noreferrer">PMC full text ↗</a>`:''}</div><p class="disclaimer">Automatically included in report. ${note?'Not supplied to AI: '+esc(note):assessment?.analyzedPMIDs.includes(ref.pmid)?'Abstract supplied to AI.':'AI analysis not completed.'} Full text not retrieved.</p><details><summary>${ref.abstracts.length?'Read retrieved abstract':'No abstract supplied'}</summary>${ref.abstracts.map(a=>`<p>${a.label?'<b>'+esc(a.label)+':</b> ':''}${esc(a.text)}</p>`).join('')||'<p>No abstract is available; no clinical conclusion is inferred from the title.</p>'}${ref.copyright?'<p class="disclaimer">'+esc(ref.copyright)+'</p>':''}</details></article>`;
+function recordHTML(r){
+ const v=reviews[r.pmid]||{decision:'pending',reason:''},s=EvidenceReview.screen(r,$('requiredTerms').value,$('excludedTerms').value);
+ return `<article class="article"><h4>${esc(r.title)}</h4><p>${esc(r.authors.join('; ')||'Authors unavailable')} · ${esc(r.year||'Year unavailable')}<br>${esc(r.journal||'Journal unavailable')}<br>PMID ${r.pmid} · ${esc(r.types.join('; ')||'Publication type unavailable')}</p><div class="article-links"><a href="${r.pubmedURL}" target="_blank" rel="noopener noreferrer">PubMed ↗</a>${r.doi?`<a href="https://doi.org/${esc(encodeURI(r.doi))}" target="_blank" rel="noopener noreferrer">DOI / publisher ↗</a>`:''}${r.pmc?`<a href="https://pmc.ncbi.nlm.nih.gov/articles/${r.pmc}/" target="_blank" rel="noopener noreferrer">PMC full text ↗</a>`:''}</div><p class="flags">${esc(s.status)}${s.missing.length?' · Unmatched required phrases: '+esc(s.missing.join('; ')):''}${s.flags.length?' · Exclusion phrases found: '+esc(s.flags.join('; ')):''}</p><p class="disclaimer">Phrase checks search title/abstract literally. They do not interpret negation or establish relevance. No automatic exclusion. Full text not retrieved.</p>${r.notices.length?'<p>'+r.notices.map(n=>esc(n.type)+(n.pmid?' — PMID '+esc(n.pmid):'')).join('<br>')+'</p>':''}<details><summary>${r.abstracts.length?'Read full retrieved abstract':'Abstract unavailable — manual source check needed'}</summary>${r.abstracts.map(a=>`<p>${a.label?'<b>'+esc(a.label)+':</b> ':''}${esc(a.text)}</p>`).join('')}${r.copyright?'<p class="disclaimer">'+esc(r.copyright)+'</p>':''}</details><label for="decision${r.pmid}">Reviewer relevance decision</label><select id="decision${r.pmid}" data-pmid="${r.pmid}" data-key="decision"><option value="pending" ${v.decision==='pending'?'selected':''}>Needs screening</option><option value="include" ${v.decision==='include'?'selected':''}>Include as relevant</option><option value="exclude" ${v.decision==='exclude'?'selected':''}>Exclude with reason</option></select><label for="reason${r.pmid}">Reason / applicability / limitations (required for include or exclude)</label><textarea id="reason${r.pmid}" data-pmid="${r.pmid}" data-key="reason">${esc(v.reason)}</textarea></article>`;
 }
 function renderRecords(){
-  $('includedCount').textContent=articles.size;
-  $('searchResults').innerHTML=articles.size?[...articles.values()].map(articleHTML).join(''):'<div class="empty-panel">No PubMed records retrieved.</div>';
-  const s=currentSearch;$('searchMeta').classList.toggle('hidden',!s);
-  if(s)$('searchMeta').innerHTML=`<b>Submitted term:</b> ${esc(s.criteria.term)}<br><b>NCBI translation:</b> ${esc(s.translation||'Unavailable')}<br><b>Matches:</b> ${s.count??'Unknown'} · <b>Records automatically included:</b> ${articles.size}<br><b>Retrieved at:</b> ${esc(s.retrievedAt||'None')}<br>${esc(s.messages.join('; '))}<br>First batch only. Search rank is not evidence quality.`;
+ const filter=$('recordFilter').value,all=[...articles.values()];
+ const list=all.filter(r=>{const v=reviews[r.pmid];return filter==='all'||(filter==='pending'?(!v?.reason?.trim()||!v||v.decision==='pending'):v?.decision===filter);});
+ const pages=Math.max(1,Math.ceil(list.length/pageSize));page=Math.min(page,pages-1);
+ $('includedCount').textContent=articles.size;$('pageInfo').textContent=`Page ${page+1} of ${pages} · ${list.length} records in this view · all ${articles.size} retained`;
+ $('prevPage').disabled=page===0;$('nextPage').disabled=page>=pages-1;
+ $('searchResults').innerHTML=list.slice(page*pageSize,(page+1)*pageSize).map(recordHTML).join('')||'<div class="empty-panel">No records in this view.</div>';
+ if(search){$('searchMeta').classList.remove('hidden');$('searchMeta').textContent=`Submitted query: ${search.criteria.term}\nSearch translation: ${search.translation||'Pending'}\nQuery matches: ${search.count??'Pending'} · Retrieved: ${articles.size}\nStatus: ${search.status}\nStarted: ${search.startedAt}\nCompleted: ${search.completedAt||'Not complete'}\n${search.error||''}\nAll query matches are paginated; 25 displayed per page is only a display setting.`;}else $('searchMeta').classList.add('hidden');
 }
-function setBusy(value){
-  busy=value;
-  for(const formID of ['reviewForm','searchForm']) $(formID).querySelectorAll('input,textarea,select,button').forEach(el=>el.disabled=value);
-  $('cancelBtn').classList.toggle('hidden',!value);
-  if(!value)$('procedure').disabled=!$('specialty').value;
-  $('assessBtn').textContent=value?'Working…':'Search evidence & assess coverage →';
-  $('searchResults').setAttribute('aria-busy',String(value));
-}
-function invalidate(){
-  if(busy)return;
-  assessment=null;assessmentInput=null;runFields=null;currentSearch=null;articles.clear();
-  renderAssessment();renderRecords();notice('Inputs changed. Start a new assessment to retrieve and analyze evidence.');
-}
-async function localInference(payload,token){
-  if(typeof Worker==='undefined'||typeof WebAssembly==='undefined')throw new Error('CPU AI requires browser Web Workers and WebAssembly. Retrieved evidence remains available.');
-  notice('Preparing CPU AI. The first model download is about 1.4 GB plus runtime files. No GPU required.');
-  if(token!==revision)throw new Error('Assessment stopped.');
-  if(!worker)worker=new Worker('./assessment-worker.mjs?v=20261019cpu1',{type:'module'});
-  return new Promise((resolve,reject)=>{
-    let timer;
-    const cleanup=()=>{clearTimeout(timer);clearTimeout(activityTimer);workerReject=null;if(worker){worker.onmessage=null;worker.onerror=null;}};
-    const fail=message=>{cleanup();worker?.terminate();worker=null;reject(new Error(message));};
-    const deadline=ms=>{clearTimeout(timer);timer=setTimeout(()=>fail('Local AI timed out. No coverage conclusion was generated.'),ms);};
-    workerReject=()=>fail('Assessment stopped.');deadline(20*60*1000);
-    let activityTimer=setTimeout(()=>fail('The AI runtime did not respond within 30 seconds. Model/CDN access may be blocked. Retrieved evidence remains available.'),30000);
-    worker.onerror=()=>fail('The local AI worker or model download could not load. Check network access, available RAM, WebAssembly support, and model-host access. No coverage conclusion was generated.');
-    worker.onmessage=event=>{
-      const msg=event.data;clearTimeout(activityTimer);
-      activityTimer=setTimeout(()=>fail('No AI progress for five minutes. The model download or inference stalled. Retrieved evidence remains available.'),5*60*1000);
-      if(token!==revision){fail('Assessment stopped.');return;}
-      if(msg.type==='progress'||msg.type==='generating'){notice(msg.message);if(msg.type==='generating')deadline(20*60*1000);}
-      if(msg.type==='error')fail('Local AI failed: '+msg.message);
-      if(msg.type==='result'){cleanup();worker?.terminate();worker=null;resolve(msg.text);}
-    };
-    try{worker.postMessage({type:'assess',model:Coverage.MODEL,messages:Coverage.prompt(payload),schema:Coverage.schema});}catch(error){fail(error.message);}
-  });
-}
-const client=PubMed.createClient({onRetry:(code,wait)=>{if(busy)notice(`NCBI returned HTTP ${code}. Retrying in ${Math.ceil(wait/1000)} seconds…`);}});
+function audit(){return {app:'Surgical Review Desk — evidence workflow',version:'2026-10-19-evidence1',exportedAt:new Date().toISOString(),case:fields(),policyVerified:$('policyVerified').checked,policyRows,screening:{requiredPhrases:EvidenceReview.terms($('requiredTerms').value),excludedPhrases:EvidenceReview.terms($('excludedTerms').value),method:'Literal title/abstract phrase flags; no automatic relevance inference or exclusion'},search,summary:summary(),records:[...articles.values()].map(r=>({...r,screen:EvidenceReview.screen(r,$('requiredTerms').value,$('excludedTerms').value),review:reviews[r.pmid]||{decision:'pending',reason:''}})),limitations:'All query matches retrieved is not all relevant literature. Query formulation, source coverage, missing abstracts/full texts, unindexed studies, multiple publications of one study, publication bias and reviewer judgments limit conclusions. No AI interpretation, automatic approval/denial or clinical validation.'};}
+function report(){const a=audit();return `SURGIREVIEW — EVIDENCE AND POLICY REVIEW\n${a.summary.outcome}\nExported ${a.exportedAt}\n\nCASE / POLICY\n${Object.entries(a.case).map(([k,v])=>k+': '+(v||'Not supplied')).join('\n\n')}\n\nPOLICY COMPARISONS (USER ENTERED)\n${policyRows.map(r=>JSON.stringify(r)).join('\n')||'None'}\nPolicy applicability confirmed by user: ${a.policyVerified}\n\nSEARCH PROVENANCE\n${JSON.stringify(search,null,2)}\n\nSCREENING RULES\n${JSON.stringify(a.screening,null,2)}\n\nFULL RETRIEVED RECORD REGISTER\n${a.records.map(r=>`PMID ${r.pmid} | ${r.title}\n${r.authors.join('; ')} | ${r.year} | ${r.journal}\n${r.pubmedURL}\nDOI: ${r.doi||'Unavailable'}\nReview: ${r.review.decision} | ${r.review.reason}\nAutomated phrase flags: ${JSON.stringify(r.screen)}\nNotices: ${JSON.stringify(r.notices)}\nAbstract (full text not retrieved):\n${r.abstracts.map(x=>(x.label?x.label+': ':'')+x.text).join('\n')||'Unavailable'}`).join('\n\n---\n\n')}\n\nLIMITATIONS\n${a.limitations}\nNCBI: https://www.ncbi.nlm.nih.gov/About/disclaimer.html\n`;}
+function download(content,name,type){const url=URL.createObjectURL(new Blob([content],{type:type+';charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+async function copyReport(){try{await navigator.clipboard.writeText(report());notice('Review copied.');}catch{notice('Clipboard unavailable. Use Download report.',true);}}
 async function assess(event){
-  event?.preventDefault();if(busy)return;
-  if(!$('procedure').value.trim()||!$('diagnosis').value.trim()){notice('Enter a procedure and clinical indication before starting.',true);return;}
-  draftQuery();let criteria;
-  try{criteria=PubMed.buildQuery({query:$('pubmedQuery').value,from:$('fromYear').value,to:$('toYear').value,type:$('pubType').value,sort:$('sortBy').value});}
-  catch(error){notice(error.message,true);return;}
-  const token=++revision;
-  assessment=null;assessmentInput=null;articles.clear();runFields=readFields();
-  currentSearch={criteria,count:null,translation:'',retrievedAt:'',messages:[],status:'Searching',error:''};
-  renderAssessment();renderRecords();setBusy(true);notice('Searching PubMed. Retrieved evidence will be included and analyzed automatically…');
-  try{
-    const result=await deadlineTask(client.search(criteria,0,10),45000,'PubMed search stalled. No search result was substituted. Try again after checking NCBI access.');if(token!==revision)return;
-    Object.assign(currentSearch,{count:result.count,translation:result.translation,messages:result.messages});
-    notice(`PubMed found ${result.count} matches. Retrieving ${result.ids.length} article records and abstracts…`);
-    const records=await deadlineTask(client.fetchRecords(result.ids),45000,'PubMed article retrieval stalled. Try again after checking NCBI access.');if(token!==revision)return;
-    currentSearch.retrievedAt=new Date().toISOString();currentSearch.status='Retrieved';
-    records.forEach(ref=>articles.set(ref.pmid,{...ref,retrievedAt:currentSearch.retrievedAt}));
-    const missing=result.ids.filter(id=>!articles.has(id));if(missing.length)currentSearch.messages.push('Missing records for PMIDs '+missing.join(', '));
-    renderRecords();assessmentInput=Coverage.prepare(runFields,[...articles.values()]);
-    if(!assessmentInput.evidence.length){
-      assessment=Coverage.indeterminate(records.length?'No usable abstract evidence was available for the local model. Metadata and notices are included below.':'The PubMed query returned no usable records. Lack of search results does not establish noncoverage.',assessmentInput);
-      notice('Evidence retrieval finished. Coverage is indeterminate; no usable abstract evidence.');
-    }else{
-      const raw=await localInference(assessmentInput,token);if(token!==revision)return;
-      assessment=Coverage.validate(raw,assessmentInput);
-      notice('Assessment draft generated. PubMed records are included automatically; verify the interpretation with a specialist.');
-    }
-    if(missing.length&&assessment.recommendation!=='indeterminate'){
-      assessment.recommendation='indeterminate';assessment.summary='Coverage remains indeterminate because some requested PubMed records were not returned.';assessment.uncertainties.unshift('Some requested PubMed records were not returned; source retrieval is incomplete.');
-    }
-    renderAssessment();renderRecords();
-  }catch(error){
-    if(token!==revision)return;
-    if(currentSearch){currentSearch.error=error.message;currentSearch.status='Assessment blocked';}
-    assessment=Coverage.indeterminate('Assessment could not be completed: '+error.message,assessmentInput);
-    notice(error.message,true);renderAssessment();renderRecords();
-  }finally{if(token===revision)setBusy(false);}
+ event?.preventDefault();if(busy)return;if(!$('procedure').value||!$('diagnosis').value.trim()){notice('Choose a specialty/procedure and enter the indication.',true);return;}
+ let criteria;try{draftQuery();criteria=PubMed.buildQuery({query:$('pubmedQuery').value,from:$('fromYear').value,to:$('toYear').value,type:$('pubType').value,sort:$('sortBy').value});}catch(e){notice(e.message,true);return;}
+ clearResearch();controller=new AbortController();search={criteria,count:null,translation:'',startedAt:new Date().toISOString(),status:'Searching all query matches',complete:false,partitions:[],error:''};
+ setBusy(true);notice('Searching PubMed. Every matching record will be requested in batches; no first-results cap.');renderResult();
+ const client=PubMed.createClient({onRetry:(status,ms)=>notice(`NCBI HTTP ${status}; retry in ${Math.ceil(ms/1000)} seconds…`)});
+ try{
+  const result=await PubMed.retrieveAll(client,criteria,{signal:controller.signal,onProgress:p=>{Object.assign(search,{count:p.total,translation:p.translation,partitions:p.partitions});notice(`${p.phase}: ${p.retrieved} retrieved / ${p.total} query matches. Keep this tab open.`);},onBatch:batch=>{const at=new Date().toISOString();batch.forEach(r=>articles.set(r.pmid,{...r,retrievedAt:at}));renderRecords();renderResult();}});
+  Object.assign(search,result,{complete:true,status:'All matches for the submitted query retrieved'});notice(`Retrieval complete: ${articles.size} records. Review relevance, source limitations and policy clauses.`);
+ }catch(e){search.error=e.message;search.status='Incomplete retrieval — no overall coverage conclusion';notice(e.message,true);}
+ finally{controller=null;setBusy(false);renderRecords();renderResult();}
 }
-async function copyBrief(){
-  const text=buildBrief();
-  try{if(!navigator.clipboard)throw new Error();await navigator.clipboard.writeText(text);toast('Assessment report copied');}
-  catch{const el=document.createElement('textarea');el.value=text;document.body.append(el);el.select();const ok=document.execCommand('copy');el.remove();toast(ok?'Report copied':'Clipboard blocked. Use Download report.');}
-}
-function downloadBrief(){const url=URL.createObjectURL(new Blob([buildBrief()],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='surgireview-coverage-assessment.txt';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('reviewForm').addEventListener('submit',assess);
-$('searchForm').addEventListener('submit',assess);
-$('reviewForm').addEventListener('input',()=>{draftQuery();invalidate();});
-$('reviewForm').addEventListener('change',event=>{
-  if(event.target.id==='specialty')updateProcedures();
-  if(event.target.id==='procedure')updateProcedureSource();
-  if(['specialty','procedure'].includes(event.target.id)){queryTouched=false;draftQuery(true);}
-  invalidate();
-});
-$('searchForm').addEventListener('input',event=>{if(event.target.id==='pubmedQuery')queryTouched=true;invalidate();});
-$('searchForm').addEventListener('change',invalidate);
-$('buildQuery').addEventListener('click',()=>{queryTouched=false;draftQuery(true);invalidate();$('pubmedQuery').focus();});
-$('cancelBtn').addEventListener('click',()=>{
-  revision++;workerReject?.();worker?.terminate();worker=null;setBusy(false);
-  assessment=Coverage.indeterminate('Assessment stopped by the user. No directional coverage conclusion generated.',assessmentInput);renderAssessment();renderRecords();notice('Assessment stopped.');
-});
-$('clearBtn').addEventListener('click',()=>{
-  if(!confirm('Clear the case, PubMed records, and coverage draft?'))return;
-  revision++;worker?.terminate();worker=null;$('reviewForm').reset();$('searchForm').reset();updateProcedures();queryTouched=false;invalidate();notice('No assessment started.');
-});
-$('sampleBtn').addEventListener('click',()=>{
-  if($('procedure').value.trim()&&!confirm('Replace the case with a fictional example?'))return;
-  const example={procedure:'Laparoscopic cholecystectomy',specialty:'General surgery',urgency:'Routine',diagnosis:'Symptomatic cholelithiasis',setting:'Outpatient / ambulatory',symptoms:'FICTIONAL CASE: Adult with recurrent right upper quadrant pain after meals for five months, interfering with daily activities; no fever or jaundice.',findings:'FICTIONAL CASE: Ultrasound reports gallstones without common bile duct dilation. Liver tests within the laboratory reference range.',treatment:'FICTIONAL CASE: Symptoms persist despite dietary modification and clinician-supervised symptom management. Alternatives discussed.',factors:'FICTIONAL CASE: Adult, no known major cardiopulmonary comorbidity, no previous abdominal surgery, no anticoagulant therapy. Anesthesia evaluation pending; patient preferences require confirmation.',criteria:'FICTIONAL TRAINING POLICY — DEMO-001, version 2026-10-19; not a real insurer policy. For this demonstration, laparoscopic cholecystectomy is eligible when recurrent symptoms compatible with biliary colic and imaging-confirmed gallstones are documented. A qualified reviewer must confirm patient-specific risk, alternatives, applicable benefit exclusions, and the actual plan before any coverage decision.',literature:'No manual citation supplied in this fictional example. Live PubMed records will be retrieved only after the user submits the displayed query; no publications are fabricated.',reviewNotes:'FICTIONAL TRAINING CASE AND POLICY. Assess applicability of retrieved abstracts, alternatives, perioperative risks, and any missing facts. No real patient or insurance eligibility is represented.'};
-  $('specialty').value=example.specialty;updateProcedures(example.procedure);
-  textFields.forEach(id=>$(id).value=example[id]);$('searchForm').reset();
-  $('fromYear').value='2016';$('toYear').value='2026';$('pubType').value='';$('sortBy').value='relevance';
-  queryTouched=false;draftQuery(true);invalidate();notice('All case fields filled with a fictional example, including a fictional policy. Review the search query, then start.');
-});
-$('specialty').innerHTML='<option value="">Select specialty first</option>'+Object.keys(ProcedureCatalog).map(name=>`<option>${esc(name)}</option>`).join('');
-updateProcedures();
-
-$('caseId').textContent='Unsaved local case';
-
-window.surgiReviewStarted=true;
+function stop(){controller?.abort();notice('Stopping retrieval after the current NCBI request. Partial results will remain marked incomplete.');}
+$('specialty').innerHTML='<option value="">Select specialty first</option>'+Object.keys(ProcedureCatalog).map(s=>'<option>'+esc(s)+'</option>').join('');updateProcedures();
+$('reviewForm').addEventListener('submit',assess);$('searchForm').addEventListener('submit',assess);
+$('reviewForm').addEventListener('change',e=>{if(e.target.id==='specialty')updateProcedures();if(e.target.id==='procedure')updateSource();if(['specialty','procedure','diagnosis'].includes(e.target.id)){queryTouched=false;draftQuery(true);clearResearch();}renderResult();});
+$('reviewForm').addEventListener('input',e=>{if(!e.target.closest('[data-policy-editor]')&&['specialty','procedure','diagnosis','symptoms','findings','treatment','factors'].includes(e.target.id)){clearResearch();draftQuery();}renderResult();});
+$('searchForm').addEventListener('input',e=>{if(e.target.id==='pubmedQuery')queryTouched=true;clearResearch();});$('searchForm').addEventListener('change',clearResearch);
+$('buildQuery').onclick=()=>{queryTouched=false;draftQuery(true);clearResearch();};
+$('addClause').onclick=()=>{policyRows.push({clause:'',status:'unknown',fact:'',document:''});renderPolicies();renderResult();};
+$('policyRows').addEventListener('input',e=>{const {row,key}=e.target.dataset;if(row!==undefined&&key){policyRows[+row][key]=e.target.value;renderResult();}});
+$('policyRows').addEventListener('click',e=>{if(e.target.dataset.remove!==undefined){policyRows.splice(+e.target.dataset.remove,1);renderPolicies();renderResult();}});
+$('searchResults').addEventListener('input',e=>{const {pmid,key}=e.target.dataset;if(pmid&&key){reviews[pmid]??={decision:'pending',reason:''};reviews[pmid][key]=e.target.value;renderResult();}});
+for(const id of ['requiredTerms','excludedTerms'])$(id).addEventListener('change',()=>{renderRecords();renderResult();});
+$('recordFilter').onchange=()=>{page=0;renderRecords();};$('prevPage').onclick=()=>{page--;renderRecords();};$('nextPage').onclick=()=>{page++;renderRecords();};
+$('cancelBtn').onclick=stop;$('stopTop').onclick=stop;
+$('clearBtn').onclick=()=>{if(!confirm('Clear this case and retrieved evidence?'))return;$('reviewForm').reset();$('searchForm').reset();policyRows=[];queryTouched=false;updateProcedures();clearResearch();renderPolicies();notice('Case cleared.');};
+$('sampleBtn').onclick=()=>{
+ if($('procedure').value&&!confirm('Replace the current case with a fictional example?'))return;
+ const example={specialty:'General surgery',procedure:'Laparoscopic cholecystectomy',urgency:'Routine',diagnosis:'Symptomatic cholelithiasis',setting:'Outpatient / ambulatory',symptoms:'FICTIONAL: recurrent right upper quadrant pain after meals for five months, affecting daily activities.',findings:'FICTIONAL: ultrasound reports gallstones without bile duct dilation.',treatment:'FICTIONAL: dietary modification and symptom management did not resolve symptoms; alternatives require review.',factors:'FICTIONAL: adult; anesthesia assessment pending. No real patient information.',criteria:'FICTIONAL TRAINING POLICY DEMO-001 (2026-10-19): recurrent biliary symptoms and imaging-confirmed gallstones must be documented. Risk, alternatives and plan exclusions require specialist confirmation. Not a real insurer policy.',literature:'No manual sources supplied. Genuine PubMed records are retrieved only on explicit submission.',reviewNotes:'Fictional case/policy. Verify applicability of all sources and do not equate documentation with medical necessity.',payer:'Fictional demo plan',policyName:'DEMO-001 — fictional training policy',policyDate:'2026-10-19',documents:'FICTIONAL: ultrasound report; symptom history; consultation note. Original files not uploaded.'};
+ $('specialty').value=example.specialty;updateProcedures(example.procedure);fieldIDs.forEach(k=>$(k).value=example[k]);$('policyVerified').checked=false;
+ policyRows=[{clause:'recurrent biliary symptoms and imaging-confirmed gallstones must be documented',status:'unknown',fact:'Recurrent symptoms and reported gallstones in fictional intake',document:'Fictional consultation note and ultrasound; originals unverified'}];
+ $('searchForm').reset();queryTouched=false;draftQuery(true);clearResearch();renderPolicies();notice('Fictional case and policy loaded. Check the query and inclusion/exclusion phrases, then start.');
+};
+$('caseId').textContent='Unsaved local case';renderPolicies();renderRecords();renderResult();window.surgiReviewStarted=true;

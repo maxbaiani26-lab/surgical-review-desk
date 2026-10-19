@@ -11,11 +11,12 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="shell topinner"><div class="brand"><div class="logo">＋</div><div>SurgiReview<small>Clinical request review</small></div></div><div class="topright"><span class="demo-pill">CPU · Prototype</span><span>U.S. surgical review workflow</span></div></div></header>
+<header class="topbar"><div class="shell topinner"><div class="brand"><div class="logo">＋</div><div>SurgiReview<small>Clinical request review</small></div></div><div class="topright"><span class="demo-pill">Evidence workflow</span><span>U.S. surgical review workflow</span></div></div></header>
 <main class="shell">
-  <section class="intro"><div><p class="eyebrow">Standardized clinical review</p><h1>From clinical case to coverage assessment.</h1><p>Enter the case and policy. Retrieve PubMed evidence and generate a reasoned draft recommendation in one action.</p></div><div class="case-ref">LOCAL DRAFT<strong id="caseId">SR-2026-001</strong></div></section>
-  <div class="notice"><div class="notice-icon">ⓘ</div><div><b>Clinical decision support prototype.</b> Use de-identified information only. PubMed receives the submitted search terms; the assessment model runs locally in your browser. CPU mode uses WebAssembly in a background worker: no GPU or API key required. First use downloads about 1.4 GB of model files plus runtime assets. Loading needs several GB of free RAM; CPU generation may take many minutes. Model assets may be cached; clinical inputs stay in memory. Outputs are unvalidated drafts for specialist review, not insurer decisions.</div></div>
+  <section class="intro"><div><p class="eyebrow">Case → policy → live evidence → specialist review</p><h1>Evidence-first surgical review.</h1><p>Document policy criteria, retrieve every match for your PubMed query, and record a transparent specialist review.</p></div><div class="case-ref">LOCAL DRAFT<strong id="caseId">SR-2026-001</strong></div></section>
+  <div class="notice"><div class="notice-icon">ⓘ</div><div><b>Rules-based review, no model download.</b> Clinical details stay in browser memory. Only submitted search terms go to NCBI. Every query match is requested; clinical relevance and policy alignment require reviewer confirmation. This prototype is unvalidated and produces no automatic insurer decision.</div></div>
   <div id="workflowStatus" class="notice" role="status" aria-live="polite">Ready. Choose a specialty and procedure, or fill the fictional example.</div>
+  <button type="button" class="btn secondary hidden" id="stopTop">Stop retrieval (keep partial results)</button>
   <div class="layout">
     <section class="card"><div class="cardhead"><h2>Request details</h2><span class="step">STRUCTURED INTAKE</span></div><div class="formbody">
       <form id="reviewForm" novalidate>
@@ -34,23 +35,34 @@
           <div class="field wide"><label for="treatment">Prior treatment and response</label><textarea id="treatment" placeholder="Treatments tried, duration, adherence, response, and why alternatives may not be appropriate"></textarea></div>
           <div class="field wide"><label for="factors">Patient-specific risks, comorbidities, and considerations</label><textarea id="factors" placeholder="Factors that affect expected benefit, risk, timing, or choice of procedure"></textarea></div>
         </div>
-        <h3 class="section-title"><span class="num">3</span> Policy and evidence references</h3>
+        <h3 class="section-title"><span class="num">3</span> Manual evidence references</h3>
         <div class="fieldgrid">
-          <div class="field wide"><label for="criteria">Applicable coverage criteria <span class="help">Paste the exact policy clause and version/date, if available.</span></label><textarea id="criteria" placeholder="Policy name, section, version/date, and criteria relevant to this request"></textarea></div>
           <div class="field wide"><label for="literature">Manually entered clinical references <span class="help">Include title, organization/authors, year, and a relevant section or link.</span></label><textarea id="literature" placeholder="Reference and the specific recommendation or finding relevant to this case"></textarea></div>
         </div>
-        <div class="field" style="margin-bottom:20px"><label for="reviewNotes">Reviewer notes and unresolved clinical questions</label><textarea id="reviewNotes" placeholder="Questions for the specialist, policy ambiguities, or evidence limitations"></textarea></div>        <div class="actions"><button type="button" class="btn ghost" id="clearBtn">Clear form</button><div class="actiongroup"><button type="button" class="btn secondary" id="sampleBtn">Fill all fields with an example</button><button type="submit" id="assessBtn" class="btn primary">Search evidence &amp; assess coverage →</button></div></div>
+        <h3 class="section-title"><span class="num">4</span> Coverage &amp; documentation</h3>
+        <div class="fieldgrid" data-policy-editor>
+          <div class="field"><label for="payer">Insurance plan / payer</label><input id="payer" placeholder="Plan and insurance category"></div>
+          <div class="field"><label for="policyName">Source policy / document</label><input id="policyName" placeholder="Policy name and identifier"></div>
+          <div class="field"><label for="policyDate">Policy version / effective date</label><input id="policyDate" placeholder="YYYY-MM-DD / version"></div>
+          <div class="field wide"><label for="criteria">Supplied policy text</label><textarea id="criteria" placeholder="Paste exact applicable policy text. Free text is retained but not automatically interpreted."></textarea></div>
+          <div class="field wide"><label for="documents">Supporting documents and references</label><textarea id="documents" placeholder="Document names, dates and page/section references. No files are automatically verified."></textarea></div>
+          <label class="field wide"><span><input id="policyVerified" type="checkbox" style="width:auto"> I have verified this policy's applicability and version for this case</span></label>
+        </div>
+        <p class="disclaimer">Record each requirement and the supporting case fact/document. Unknown remains unknown; missing documentation is not proof of noncoverage.</p>
+        <div id="policyRows" data-policy-editor></div><button type="button" class="btn secondary" id="addClause">Add policy clause</button>
+        <div class="field" style="margin:20px 0"><label for="reviewNotes">Reviewer notes and unresolved questions</label><textarea id="reviewNotes" placeholder="Policy ambiguities, alternatives, source quality and patient-specific applicability"></textarea></div>
+        <div class="actions"><button type="button" class="btn ghost" id="clearBtn">Clear form</button><div class="actiongroup"><button type="button" class="btn secondary" id="sampleBtn">Fill all fields with an example</button><button type="submit" id="assessBtn" class="btn primary">Retrieve evidence &amp; build review →</button></div></div>
       </form>
     </div></section>
     <aside class="rightcol">
-      <section class="card result-card"><div class="cardhead"><h2>Coverage assessment</h2><span class="step">AI DRAFT</span></div><div id="resultArea"><div class="result-body"><div class="empty-panel">Enter the clinical case and relevant policy, then choose Search evidence &amp; assess coverage. PubMed records will be included automatically.</div></div></div><div class="footer-note">The AI may suggest supporting coverage, not supporting coverage under the supplied policy, or an indeterminate result. A qualified reviewer must verify evidence, policy interpretation, and patient applicability.</div></section>
-      <section class="card"><div class="cardhead"><h2>Evidence handling</h2><span class="step">TRACEABLE SOURCES</span></div><div class="result-body"><div class="evidence-box"><strong>Retrieve → analyze → recommend</strong>Retrieved records are automatically included. The local AI compares available abstracts and patient facts with the policy you supplied, citing PMIDs and source quotes. No policy means no directional coverage conclusion.<div class="tag">Abstract retrieval ≠ full-text review</div></div><div class="rule"></div><p class="disclaimer">Search rank, publication type, and recency do not establish reliability or medical necessity. Retraction notices are shown when supplied in the retrieved record; this is not a complete integrity check.</p></div></section>
+      <section class="card result-card"><div class="cardhead"><h2>Assessment results</h2><span class="step">SPECIALIST REVIEW</span></div><div id="resultArea"></div><div class="footer-note">No completeness score. Literature retrieval, reviewer-confirmed relevance and policy eligibility are distinct.</div></section>
+      <section class="card"><div class="cardhead"><h2>Evidence workflow</h2><span class="step">TRACEABLE SOURCES</span></div><div class="result-body"><p>All query matches → deduplicated PMID register → explicit relevance review → documented policy comparison.</p><p class="disclaimer">All matches for one search are not all relevant literature. Review synonyms, procedure variants, comparators, inclusion/exclusion criteria and source coverage. Abstracts may be absent, and full texts may be needed.</p></div></section>
     </aside>
   </div>
 <section class="card pubmed-card" aria-labelledby="pubmedHeading">
 <div class="cardhead"><h2 id="pubmedHeading">PubMed literature search</h2><span class="step">NCBI E-UTILITIES</span></div>
 <div class="formbody">
-<p class="disclaimer">The main assessment action uses this query and these filters. A query is drafted from the procedure and diagnosis; you can edit it here before starting. All returned records are automatically included. Clinical notes stay local; do not put identifiers in this query.</p>
+<p class="disclaimer">All matches for the submitted query and filters are retrieved in batches. There is no first-ten or first-page sampling. The query is drafted from procedure and diagnosis: edit it to include synonyms and variants before submitting. Clinical notes stay local; do not put identifiers in this query.</p>
 <form id="searchForm" novalidate>
 <div class="field" style="margin-top:16px"><label for="pubmedQuery">Search query</label><textarea id="pubmedQuery" rows="2" placeholder="e.g., cholecystectomy AND cholelithiasis" aria-describedby="queryHelp"></textarea><span id="queryHelp" class="help">Use clinical terms and PubMed syntax. Editing the intake never sends a request.</span></div>
 <div class="searchfilters">
@@ -59,11 +71,12 @@
 <div class="field"><label for="pubType">Publication type</label><select id="pubType"><option value="">All types</option><option>Randomized Controlled Trial</option><option>Systematic Review</option><option>Meta-Analysis</option><option>Practice Guideline</option><option>Clinical Trial</option><option>Review</option></select></div>
 <div class="field"><label for="sortBy">Sort order</label><select id="sortBy"><option value="relevance">Relevance</option><option value="pub_date">Publication date</option></select></div>
 </div>
-<div class="search-actions"><button type="button" class="btn secondary" id="buildQuery">Build query from procedure + diagnosis</button><button class="btn primary" id="searchBtn" type="submit">Search &amp; assess</button></div>
+<div class="search-actions"><button type="button" class="btn secondary" id="buildQuery">Build query from procedure + diagnosis</button><button class="btn primary" id="searchBtn" type="submit">Retrieve every query match</button></div>
 </form>
 <p id="searchStatus" role="status" aria-live="polite" class="search-status">No assessment started.</p><button type="button" class="btn secondary hidden" id="cancelBtn">Stop assessment</button>
 <div id="searchMeta" class="search-meta hidden"></div>
-<div><h3 class="section-title">Automatically included PubMed records <span id="includedCount" class="demo-pill">0</span></h3><p class="disclaimer" style="margin-bottom:12px">Up to 10 records from the submitted search. Inclusion is not a claim of relevance or reliability. The assessment identifies which abstracts it actually analyzed.</p><div id="searchResults"><div class="empty-panel">No records retrieved yet.</div></div></div>
+<div class="fieldgrid" style="margin-top:18px"><div class="field"><label for="requiredTerms">Required relevance phrases (one per line, optional)</label><textarea id="requiredTerms" placeholder="Explicit population / procedure terms for transparent phrase flags"></textarea></div><div class="field"><label for="excludedTerms">Exclusion warning phrases (one per line, optional)</label><textarea id="excludedTerms" placeholder="Flag possible exclusions for manual review"></textarea></div></div>
+<div><h3 class="section-title">Full retrieved evidence register <span id="includedCount" class="demo-pill">0</span></h3><p class="disclaimer">Every record is retained. Phrase checks never automatically exclude an article. Record an include/exclude decision and reason; missing abstracts and integrity notices remain visible. Display pages do not limit retrieval or exports.</p><label for="recordFilter">Display records</label><select id="recordFilter"><option value="all">All retrieved records</option><option value="pending">Awaiting relevance decision / reason</option><option value="include">Reviewer-included</option><option value="exclude">Reviewer-excluded</option></select><div class="search-actions" style="margin:15px 0"><button type="button" class="btn secondary" id="prevPage">Previous page</button><span id="pageInfo"></span><button type="button" class="btn secondary" id="nextPage">Next page</button></div><div id="searchResults"></div></div>
 <p class="disclaimer attribution">Data supplied by the <a href="https://www.ncbi.nlm.nih.gov/" target="_blank" rel="noopener noreferrer">National Center for Biotechnology Information (NCBI)</a>, U.S. National Library of Medicine. <a href="https://www.ncbi.nlm.nih.gov/About/disclaimer.html" target="_blank" rel="noopener noreferrer">NCBI Disclaimer and Copyright</a>. Abstracts may be copyrighted. The app retrieves metadata and abstracts only; publisher or PMC links may lead to full text, which this app does not retrieve.</p>
 </div></section>
 
@@ -72,9 +85,9 @@
 window.surgiReviewStarted=false;
 window.addEventListener('error',function(event){
   const status=document.getElementById('workflowStatus');
-  if(status)status.textContent=event.target&&event.target.tagName==='SCRIPT'?'An application file did not load. Upload all six application files, including procedures.js, then hard-refresh this page.':'Application error: '+(event.message||'Initialization failed')+'. Reload after checking all application files were uploaded.';
+  if(status)status.textContent=event.target&&event.target.tagName==='SCRIPT'?'An application file did not load. Upload all five application files, including procedures.js, then hard-refresh this page.':'Application error: '+(event.message||'Initialization failed')+'. Reload after checking all application files were uploaded.';
 },true);
 window.addEventListener('DOMContentLoaded',function(){
-  if(!window.surgiReviewStarted)document.getElementById('workflowStatus').textContent='Application initialization failed. Upload all six application files from the same release and hard-refresh the page.';
+  if(!window.surgiReviewStarted)document.getElementById('workflowStatus').textContent='Application initialization failed. Upload all five application files from the same release and hard-refresh the page.';
 });
-</script><script src="./procedures.js?v=20261019cpu1" defer></script><script src="./pubmed.js?v=20261019cpu1" defer></script><script src="./assessment.js?v=20261019cpu1" defer></script><script src="./app.js?v=20261019cpu1" defer></script><noscript><p>JavaScript is required. Enable it to use the procedure menus and PubMed search.</p></noscript></body></html>
+</script><script src="./procedures.js?v=20261019evidence1" defer></script><script src="./pubmed.js?v=20261019evidence1" defer></script><script src="./review.js?v=20261019evidence1" defer></script><script src="./app.js?v=20261019evidence1" defer></script><noscript><p>JavaScript is required. Enable it to use the procedure menus and PubMed search.</p></noscript></body></html>

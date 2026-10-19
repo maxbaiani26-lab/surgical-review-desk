@@ -1,71 +1,60 @@
-# Surgical Review Desk — CPU edition
+# Surgical Review Desk — evidence workflow
 
-App URL: https://maxbaiani26-lab.github.io/surgical-review-desk/
+Site: https://maxbaiani26-lab.github.io/surgical-review-desk/
 
-## What changed
+This release follows the supplied video's coverage/documentation and evidence-review flow. It uses deterministic rules and public PubMed retrieval, with no GPU, CPU language model, API key or inference backend. It does not reproduce the video's entire design or infer what its unseen backend does. There is no documentation completeness percentage.
 
-The former WebLLM/WebGPU runtime was replaced with Transformers.js 3.8.1 and SmolLM2-1.7B-Instruct, quantized q4, explicitly using the WASM CPU backend. No GPU adapter is requested. No remote inference, API key, backend, or per-assessment API charge is required. Network/data and electricity costs can still apply.
+## Deploy
 
-The app retains the dependent specialty/procedure menus, complete fictional example, live PubMed retrieval, automatic inclusion of records, evidence/policy validation, and copy/download exports. This is an unvalidated clinical decision-support prototype; outputs require specialist review.
+Unzip `surgical-review-desk-evidence.zip`. Upload the CONTENTS of its `surgical-review-desk` folder to the root of `maxbaiani26-lab/surgical-review-desk`, replacing files. Required files:
 
-## Update GitHub Pages
+- index.html
+- app.js
+- procedures.js
+- pubmed.js
+- review.js
 
-1. Unzip `surgical-review-desk-cpu.zip` and open its `surgical-review-desk` folder.
-2. Upload the folder CONTENTS to the root of `maxbaiani26-lab/surgical-review-desk`, replacing previous files. All six application files must be from this release:
-   - index.html
-   - app.js
-   - procedures.js
-   - pubmed.js
-   - assessment.js
-   - assessment-worker.mjs
-3. Commit to your Pages branch (normally main). Settings → Pages should use main and / (root).
-4. Visit the URL above and hard-refresh with Ctrl+F5. The header should show **CPU · Prototype**. The runtime script URLs are versioned to avoid stale application code.
+Commit to the configured Pages branch (normally main). Pages settings remain main and / (root). Hard-refresh the site with Ctrl+F5; the badge should read **Evidence workflow**. Old assessment.js and assessment-worker.mjs are no longer referenced and need not be deployed. They can remain in an existing repository unused. No remote deployment was performed here.
 
-No repository change or deployment was performed by this package.
+## Coverage & documentation
 
-## Use and CPU requirements
+Choose specialty/procedure and enter de-identified case details. Fill policy payer, identifier/version, exact policy excerpt and document references. Add individual policy clauses with reviewer-reported alignment, supporting case fact and source document/page. Applicability remains unverified until the reviewer checks it. The example fills all intake fields with fictional details and a fictional policy; it does not assert verification.
 
-Choose a specialty and procedure or click **Fill all fields with an example**. Review the fictional policy and case or replace them with de-identified inputs and the actual applicable policy. Check the editable PubMed query, then click **Search evidence & assess coverage**.
+Status rules distinguish incomplete retrieval, unverified policy, reported policy conflict, unfinished relevance screening, and criteria reported met. Even when entered criteria are reported met, specialist confirmation is required. These are rules about explicitly entered judgments; free-text clinical notes, policies and scientific results are not automatically interpreted. A documented criterion is not proof of medical necessity or authorization.
 
-- A modern desktop browser with WebAssembly and module Web Workers is required. HTTPS GitHub Pages is supported by design. WebGPU is not used.
-- First use downloads about 1.41 GB of quantized model weights plus tokenizer/runtime/WASM assets. Several GB of free RAM are needed; exact memory and speed have not been measured here. A computer with 16 GB total RAM can still fail if browser memory or available RAM is insufficient.
-- Model files may be cached by the browser. Cache eviction, private browsing or storage quotas may require downloading again. No patient case is stored in localStorage, IndexedDB or an application database.
-- CPU execution is single-threaded deliberately: GitHub Pages does not supply the cross-origin isolation headers required for shared-memory WASM threading. A background worker keeps the interface responsive, but single-thread generation may take many minutes.
-- First loading and generation each have a 20-minute deadline. Worker startup fails after 30 seconds without a response; subsequent inactivity fails after five minutes. Token/text-chunk progress is reported while generating. **Stop assessment** terminates the worker. A timer in the busy worker is not used to fabricate progress.
-- The worker is terminated after a successful draft or failure, releasing the model and inference state; a later case reloads the model from cache where possible.
-- Runtime/model hosts must be accessible: jsDelivr, Hugging Face, and its public artifact/CDN hosts. These downloads do not invoke an inference API. Offline use is not guaranteed even after caching.
-- Clinical case and policy are passed only to the local worker. PubMed receives only the explicitly submitted query and filters. Do not put identifiers in queries. Dependency hosts receive download requests, not case prompts.
+## Retrieve the full query result set
 
-## Evidence and assessment limits
+Review the draft PubMed query and add synonyms, alternative procedure names, population and comparator terms as appropriate. Optional date/type filters are explicit and restrict the search. There is no default date restriction and no first-ten cap. Clicking Retrieve is the sole request to send the displayed query and filters to NCBI; case details and policy stay local unless explicitly exported.
 
-The app searches official NCBI E-utilities and includes up to ten returned PubMed records, with available metadata, abstracts, notices and source links. Full texts are not downloaded. A limited search is not a systematic review; search rank and indexing do not prove relevance or quality.
+The app identifies every record matching the submitted query in ESearch pages of 200 identifiers and fetches full available metadata/abstracts in batches of 50. Calls are throttled and rate-limit/server errors receive bounded retries. If a query exceeds ESearch's 10,000-ID per-query retrieval window, it is recursively split into disjoint PMID/UID ranges. This follows the UID-range strategy described by NCBI staff:
+https://ncbiinsights.ncbi.nlm.nih.gov/2022/11/22/updated-pubmed-eutilities-live/
 
-The CPU model has an 8,192-token context. In addition to existing character budgets (7,000 case/policy characters and 10,000 evidence/title characters), the worker tokenizes the entire prompt and schema and reserves 1,800 output tokens. Oversized inputs fail explicitly without silently truncating sources. Smaller policy excerpts or a narrower search may be needed. Complete abstracts that do not fit the character budget are listed as not analyzed, withholding directional conclusions.
+Every returned PMID must be unique, every requested article must be returned, each page count must remain stable, and final unique/retrieved totals must equal the initial count before the search is marked complete. UID subdivision uses the range 0–999999999999; if matches ever fall outside it, final counts fail instead of silently claiming completeness. API count/index changes, missing records, unexpected IDs, access errors or cancellation leave the review explicitly incomplete. Stop waits for the in-flight request/backoff to finish; it prevents further batches and retains previously delivered records.
 
-SmolLM2 is a small general-purpose model, not a validated clinical assessment model. CPU generation uses a JSON schema as an instruction, not a constrained decoder. Complete JSON (optionally inside a whole markdown fence) is required; malformed, truncated, fabricated or nonmatching citations/quotes are rejected, with no fabricated fallback. This can result in an indeterminate assessment even if the runtime works.
+There is no application article-count cap. Very broad queries can still exceed available browser memory/time. Keep the tab open; use Stop and export partial work when needed. This is an in-memory static browser application, not an unlimited background research service. Reloading loses the case and records. A completed query is a retrieval reconciliation, not a guarantee of systematic review completeness or clinical relevance.
 
-PMID membership and exact abstract, policy and case quotes are validated. These checks cannot validate the interpretation, identify every policy condition, or establish clinical applicability. Missing policy, unsupported comparisons, omitted usable evidence and other uncertainty withhold a directional conclusion. Neither missing studies nor a failed model establishes noncoverage. Outputs are nonbinding drafts, not insurer authorizations, denials, or recommendations to undergo surgery.
+## Relevance screening and reporting
 
-## Procedure catalog
+All fetched records enter the evidence register. Optional required phrases and exclusion-warning phrases (one per line) flag literal matches in titles/abstracts. Missing phrases, warning phrases, absent abstracts and available integrity notices remain visible; the app never automatically excludes studies using these signals. Literal matches do not interpret negation, establish applicability, score quality, or summarize study effects.
 
-The menu contains 11 specialties and 30 curated entries, not an exhaustive procedure/CPT/HCPCS or coverage catalog. Each entry has an official U.S. source link in `procedures.js` and under the menu. Specialty assignments are editorial and overlap. Sources reviewed October 19, 2026:
+Reviewers record Include/Exclude/Needs screening and a reason with applicability/limitations. Include or Exclude without a reason remains pending in the overall count. Different publications of the same study are not automatically consolidated: PMID deduplication only prevents duplicate citation records. Full texts are linked where available, not retrieved or read by the app.
 
-- U.S. National Library of Medicine, MedlinePlus encyclopedia: https://medlineplus.gov/ency/encyclopedia_S.htm
-- American College of Surgeons specialties: https://www.facs.org/for-medical-professionals/education/programs/so-you-want-to-be-a-surgeon/section-ii-surgical-specialties/
-- ACS cholecystectomy: https://www.facs.org/for-patients/the-day-of-your-surgery/cholecystectomy/
+Display pagination shows 25 articles at a time; all records remain in memory and appear in text and full audit JSON exports. Exports include case details, policy comparisons, submitted query/filter/translation, search timestamps, partition log, completion state, per-record metadata and abstracts, phrase flags, and relevance decisions/reasons. This includes excluded and pending citations.
 
-## Technical sources
+**All query matches does not mean all relevant literature.** Relevant studies can be missed by query wording, missing terms, indexing, source coverage, language, unpublished results or unavailable full texts. A broad search can also return many irrelevant records. The interface and report make these boundaries explicit instead of treating search rank as evidence selection.
 
-- Transformers.js CPU/WASM overview: https://huggingface.co/docs/transformers.js/en/index
-- Runtime release: https://github.com/huggingface/transformers.js/tree/3.8.1
-- Model card and license: https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct
-- Quantized assets: https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct/tree/main/onnx
-- NCBI E-utilities: https://www.nlm.nih.gov/dataguide/eutilities/utilities.html
+## Validation
+
+21 automated service, retrieval, rule and workflow tests passed with synthetic/mocked records. These cover >10 results, >10,000-ID subdivision, missing/duplicate records, count drift, cancellation, no-result/error behavior, literal screening, policy uncertainty, sample fill, stale case clearing and full export beyond display pages. Syntax checks passed for all four JavaScript files.
+
+Live PubMed retrieval, HTTP(S) browser CORS, visual/mobile rendering and performance remain unverified in this workspace because external requests and browser downloads were blocked in this session. No clinical validation or coverage-decision validation is claimed. See VERIFICATION.md.
+
+## Sources
+
+- NLM API guide: https://www.nlm.nih.gov/dataguide/eutilities/utilities.html
+- NCBI API/window update and UID-range explanation: https://ncbiinsights.ncbi.nlm.nih.gov/2022/11/22/updated-pubmed-eutilities-live/
 - NCBI usage limits: https://www.ncbi.nlm.nih.gov/books/NBK25497/
-- NCBI disclaimer/copyright: https://www.ncbi.nlm.nih.gov/About/disclaimer.html
+- NCBI attribution/disclaimer: https://www.ncbi.nlm.nih.gov/About/disclaimer.html
+- Procedure catalog: each entry in procedures.js links to MedlinePlus (U.S. National Library of Medicine) or the American College of Surgeons. Eleven specialties/30 curated entries; not an exhaustive billing or coverage catalog.
 
-## Verification
-
-32 automated tests passed using synthetic fixtures and mocked inference/network responses. Checks cover CPU-only configuration, local prompt handoff, context overflow, JSON rejection, worker release, cancellation, dependent menus, sample fill, NCBI request logic and quote validation. JavaScript syntax checks passed. See VERIFICATION.md for limitations.
-
-Actual model download, CPU inference, performance, mobile rendering and live PubMed browser CORS remain unverified: this workspace blocks dependency downloads and browser installation. This package removes the GPU dependency in code; it does not promise successful loading or clinically correct output on every device.
+Abstracts may be copyrighted. Data are supplied by NCBI, U.S. National Library of Medicine. Available correction/retraction metadata are not a complete research-integrity check.
